@@ -259,5 +259,5 @@ def _write_predictions_csv(
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["index", "y_true", "y_pred"])
-        for i, (yt, yp) in enumerate(zip(y_true, y_pred)):
+        for i, (yt, yp) in enumerate(zip(y_true, y_pred, strict=True)):
             writer.writerow([i, float(yt), float(yp)])

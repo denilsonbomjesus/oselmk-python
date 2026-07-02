@@ -113,7 +113,6 @@ def _mackey_glass_synthetic(
 
     Parameters match the benchmark configuration used in the paper.
     """
-    history = np.full(tau + 1, n0, dtype=float)
     x = [n0] * (tau + 1)
     for _ in range(n):
         x_now = x[-1]
