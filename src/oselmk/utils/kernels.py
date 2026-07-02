@@ -25,7 +25,6 @@ This avoids explicit loops and is memory-efficient for large matrices.
 import numpy as np
 from numpy.typing import NDArray
 
-
 # ---------------------------------------------------------------------------
 # Public constants
 # ---------------------------------------------------------------------------
