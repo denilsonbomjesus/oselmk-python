@@ -73,16 +73,6 @@ Results
 
 from __future__ import annotations
 
-# --- windowing --------------------------------------------------------------
-from oselmk.utils.windowing import make_lag_features
-
-# --- normalisation ----------------------------------------------------------
-from oselmk.utils.normalization import ZScoreNormalizer
-
-# --- metrics ----------------------------------------------------------------
-from oselmk.utils.metrics import compute_all, mape, nrmse, rmse, smape
-
-# --- kernels ----------------------------------------------------------------
 from oselmk.utils.kernels import (
     kernel_matrix,
     linear_kernel,
@@ -90,9 +80,10 @@ from oselmk.utils.kernels import (
     rbf_kernel,
     wavelet_kernel,
 )
-
-# --- results ----------------------------------------------------------------
+from oselmk.utils.metrics import compute_all, mape, nrmse, rmse, smape
+from oselmk.utils.normalization import ZScoreNormalizer
 from oselmk.utils.results import save_run
+from oselmk.utils.windowing import make_lag_features
 
 __all__: list[str] = [
     # windowing

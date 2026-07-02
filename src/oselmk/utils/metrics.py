@@ -4,51 +4,60 @@ All functions follow the scikit-learn convention: they receive the raw
 arrays ``(y_true, y_pred)`` instead of a pre-computed error vector.
 
 This fixes a semantic ambiguity in the original Octave code where ``mse.m``
-expected the *error* ``E = target - output`` instead of the raw arrays,
-causing ``calc_errors.m`` to call ``sqrt(mse(target - output))`` -- correct
-but confusing.  Here, every function is self-contained.
+expected the **error vector** ``e = target - output`` rather than the raw
+predictions.  Here every function is self-contained.
 
-MAPE edge case
---------------
-The original code used ``all(target != 0)`` to guard against division by
-zero, which silently returns NaN for the whole batch if *any* true value is
-exactly zero -- even floating-point rounding artefacts can trigger this.
-Here, ``np.isclose(y_true, 0)`` is used to identify near-zero entries;
-those samples are excluded from the MAPE average and a warning is issued
-when exclusions occur.
+Metrics
+-------
 
-Reference formulas
-------------------
-* RMSE  : sqrt(mean((y_true - y_pred)^2))
-* NRMSE : RMSE / (max(y_true) - min(y_true))
-* MAPE  : mean(|e_i / y_true_i|)  for y_true_i != 0
-* SMAPE : 2 * mean(|e_i| / (|y_true_i| + |y_pred_i|))
+``rmse``
+    Root Mean Squared Error.  Always non-negative; 0 for perfect predictions.
+
+``nrmse``
+    Normalised RMSE: ``rmse / (max(y_true) - min(y_true))``.
+    Returns ``nan`` for constant series (zero range) to avoid division by
+    zero—matching the behaviour of the Octave ``calc_errors.m`` guard.
+
+``mape``
+    Mean Absolute Percentage Error.  Excludes samples where
+    ``|y_true| < eps`` (following the Octave ``if all(target != 0)`` guard)
+    and returns ``nan`` when *all* true values are near zero.
+
+``smape``
+    Symmetric MAPE: ``mean(|y_true - y_pred| / ((|y_true|+|y_pred|)/2))``.
+    Bounded in ``[0, 2]``; degenerate ``0/0`` samples contribute 0.
+
+``compute_all``
+    Convenience wrapper returning all four metrics as a ``dict``.
+
+Notes
+-----
+All public functions validate their inputs and raise :exc:`ValueError`
+for mismatched lengths or empty arrays.
 """
 
 from __future__ import annotations
-
-import warnings
 
 import numpy as np
 from numpy.typing import NDArray
 
 
 # ---------------------------------------------------------------------------
-# Private helpers
+# Validation helper
 # ---------------------------------------------------------------------------
 
 
-def _validate_inputs(
+def _validate(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Validate and coerce inputs to 1-D float arrays of the same length."""
+    """Cast inputs to float arrays, flatten, and validate shapes."""
     y_true = np.asarray(y_true, dtype=float).ravel()
     y_pred = np.asarray(y_pred, dtype=float).ravel()
     if y_true.shape != y_pred.shape:
         raise ValueError(
-            f"y_true and y_pred must have the same shape. "
-            f"Got {y_true.shape} and {y_pred.shape}."
+            f"y_true and y_pred must have the same length. "
+            f"Got {len(y_true)} vs {len(y_pred)}."
         )
     if len(y_true) == 0:
         raise ValueError("y_true and y_pred must not be empty.")
@@ -69,16 +78,14 @@ def rmse(
     Parameters
     ----------
     y_true : array-like, shape (n,)
-        Ground-truth values.
     y_pred : array-like, shape (n,)
-        Predicted values.
 
     Returns
     -------
     float
-        RMSE >= 0.  Returns 0.0 for perfect predictions.
+        RMSE >= 0.
     """
-    y_true, y_pred = _validate_inputs(y_true, y_pred)
+    y_true, y_pred = _validate(y_true, y_pred)
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
@@ -86,11 +93,10 @@ def nrmse(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
 ) -> float:
-    """Normalised Root Mean Squared Error (range-normalised).
+    """Normalised RMSE (range-normalised).
 
-    NRMSE = RMSE / (max(y_true) - min(y_true))
-
-    Allows comparison of RMSE across series with different scales.
+    Computed as ``rmse / (max(y_true) - min(y_true))``.
+    Returns ``nan`` when all true values are identical (zero range).
 
     Parameters
     ----------
@@ -100,57 +106,42 @@ def nrmse(
     Returns
     -------
     float
-        NRMSE >= 0.  Returns ``nan`` if the range of y_true is zero
-        (constant series) and emits a :class:`UserWarning`.
+        NRMSE >= 0, or ``nan`` for a constant series.
     """
-    y_true, y_pred = _validate_inputs(y_true, y_pred)
+    y_true, y_pred = _validate(y_true, y_pred)
     r = float(np.max(y_true) - np.min(y_true))
-    if np.isclose(r, 0.0):
-        warnings.warn(
-            "Range of y_true is zero (constant series). NRMSE is undefined (nan).",
-            UserWarning,
-            stacklevel=2,
-        )
+    if r == 0.0:
         return float("nan")
-    return rmse(y_true, y_pred) / r
+    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)) / r)
 
 
 def mape(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
+    eps: float = 1e-10,
 ) -> float:
     """Mean Absolute Percentage Error.
 
-    MAPE = mean(|y_true_i - y_pred_i| / |y_true_i|)  for y_true_i != 0
-
-    Samples where ``y_true`` is near zero (``np.isclose``) are excluded from
-    the average.  A :class:`UserWarning` is issued when any samples are
-    excluded.  Returns ``nan`` if *all* samples are excluded.
+    Samples where ``|y_true| < eps`` are excluded.  Returns ``nan`` when
+    *all* true values are near zero.
 
     Parameters
     ----------
     y_true : array-like, shape (n,)
     y_pred : array-like, shape (n,)
+    eps : float, default 1e-10
+        Threshold below which a true value is considered zero.
 
     Returns
     -------
     float
-        MAPE >= 0 (in absolute ratio units, not percentage).  Multiply by 100
-        for the percentage form.  Returns ``nan`` if no valid samples remain.
+        MAPE >= 0 (as a fraction, not a percentage), or ``nan``.
     """
-    y_true, y_pred = _validate_inputs(y_true, y_pred)
-    near_zero = np.isclose(y_true, 0.0)
-    n_excluded = int(near_zero.sum())
-    if n_excluded > 0:
-        warnings.warn(
-            f"{n_excluded} sample(s) with y_true near zero excluded from MAPE.",
-            UserWarning,
-            stacklevel=2,
-        )
-    valid = ~near_zero
-    if not valid.any():
+    y_true, y_pred = _validate(y_true, y_pred)
+    mask = np.abs(y_true) >= eps
+    if not np.any(mask):
         return float("nan")
-    return float(np.mean(np.abs(y_true[valid] - y_pred[valid]) / np.abs(y_true[valid])))
+    return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])))
 
 
 def smape(
@@ -159,11 +150,9 @@ def smape(
 ) -> float:
     """Symmetric Mean Absolute Percentage Error.
 
-    SMAPE = 2 * mean(|y_true_i - y_pred_i| / (|y_true_i| + |y_pred_i|))
-
-    Unlike MAPE, SMAPE is symmetric and bounded in [0, 2].  Samples where
-    both ``y_true`` and ``y_pred`` are zero are excluded (denominator = 0)
-    and a :class:`UserWarning` is issued.
+    Computed as ``mean(|y_true - y_pred| / ((|y_true| + |y_pred|) / 2))``.
+    Degenerate samples where both values are zero contribute 0.
+    The result is bounded in ``[0, 2]``.
 
     Parameters
     ----------
@@ -173,25 +162,14 @@ def smape(
     Returns
     -------
     float
-        SMAPE in [0, 2].  Returns ``nan`` if no valid samples remain.
+        sMAPE in [0, 2].
     """
-    y_true, y_pred = _validate_inputs(y_true, y_pred)
-    denominator = np.abs(y_true) + np.abs(y_pred)
-    zero_denom = np.isclose(denominator, 0.0)
-    n_excluded = int(zero_denom.sum())
-    if n_excluded > 0:
-        warnings.warn(
-            f"{n_excluded} sample(s) where both y_true and y_pred are near "
-            "zero excluded from SMAPE.",
-            UserWarning,
-            stacklevel=2,
-        )
-    valid = ~zero_denom
-    if not valid.any():
-        return float("nan")
-    return float(
-        2.0 * np.mean(np.abs(y_true[valid] - y_pred[valid]) / denominator[valid])
-    )
+    y_true, y_pred = _validate(y_true, y_pred)
+    denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
+    num = np.abs(y_true - y_pred)
+    # avoid 0/0: when both values are zero the error is 0
+    ratio = np.where(denom == 0.0, 0.0, num / denom)
+    return float(np.mean(ratio))
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +181,7 @@ def compute_all(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
 ) -> dict[str, float]:
-    """Compute all four metrics in a single call.
+    """Compute all four metrics and return them as a dictionary.
 
     Parameters
     ----------
@@ -212,12 +190,12 @@ def compute_all(
 
     Returns
     -------
-    dict with keys ``'rmse'``, ``'nrmse'``, ``'mape'``, ``'smape'``.
-    Each value is a float (may be ``nan`` in degenerate cases).
+    dict
+        Keys: ``'rmse'``, ``'nrmse'``, ``'mape'``, ``'smape'``.
     """
     return {
-        "rmse": rmse(y_true, y_pred),
+        "rmse":  rmse(y_true, y_pred),
         "nrmse": nrmse(y_true, y_pred),
-        "mape": mape(y_true, y_pred),
+        "mape":  mape(y_true, y_pred),
         "smape": smape(y_true, y_pred),
     }

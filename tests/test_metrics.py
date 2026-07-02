@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
 
 from oselmk.utils.metrics import compute_all, mape, nrmse, rmse, smape
 
@@ -26,7 +25,6 @@ def test_rmse_perfect_prediction():
 def test_rmse_known_value():
     yt = np.array([1.0, 2.0, 3.0])
     yp = np.array([2.0, 2.0, 2.0])
-    # errors: [-1, 0, 1], mse = 2/3
     assert rmse(yt, yp) == pytest.approx((2.0 / 3.0) ** 0.5, rel=1e-9)
 
 def test_rmse_non_negative():
@@ -58,7 +56,7 @@ def test_nrmse_constant_series_returns_nan():
 
 def test_nrmse_normalised_by_range():
     yt = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
-    yp = np.array([0.0, 1.0, 2.0, 3.0, 5.0])  # one error of 1.0
+    yp = np.array([0.0, 1.0, 2.0, 3.0, 5.0])
     r = rmse(yt, yp)
     expected = r / (4.0 - 0.0)
     assert nrmse(yt, yp) == pytest.approx(expected, rel=1e-9)
@@ -77,7 +75,6 @@ def test_mape_non_negative():
 def test_mape_known_value():
     yt = np.array([100.0, 200.0])
     yp = np.array([110.0, 190.0])
-    # |10/100| + |10/200| = 0.1 + 0.05 = 0.15; mean = 0.075
     assert mape(yt, yp) == pytest.approx(0.075, rel=1e-9)
 
 def test_mape_all_zeros_returns_nan():
@@ -104,7 +101,6 @@ def test_smape_bounded_by_2():
 def test_smape_known_value():
     yt = np.array([100.0])
     yp = np.array([200.0])
-    # |100| / ((100+200)/2) = 100/150 ≈ 0.6667
     assert smape(yt, yp) == pytest.approx(100.0 / 150.0, rel=1e-9)
 
 

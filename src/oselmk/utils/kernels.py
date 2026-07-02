@@ -57,11 +57,9 @@ def _pairwise_sq_dist(
     D : ndarray, shape (m, n)
         D[i, j] = ||A[i] - B[j]||^2
     """
-    # ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a.b
     sq_a = np.sum(A ** 2, axis=1, keepdims=True)  # (m, 1)
     sq_b = np.sum(B ** 2, axis=1, keepdims=True)  # (n, 1)
     dist_sq = sq_a + sq_b.T - 2.0 * (A @ B.T)
-    # numerical rounding can yield small negatives; clip to zero
     return np.maximum(dist_sq, 0.0)
 
 
