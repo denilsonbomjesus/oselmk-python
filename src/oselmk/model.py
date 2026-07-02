@@ -30,6 +30,18 @@ This implementation uses ``scipy.linalg.solve(A, b, assume_a='pos')``
 instead.  Solving a linear system is numerically more stable than
 explicit inversion and roughly twice as fast for symmetric positive
 definite matrices.
+
+Prediction caching
+------------------
+The original ``predict_os_elmk.m`` recomputed
+``OutputWeight = R_inv \ T`` on every prediction call -- an O(n^2)
+operation that is redundant when the model state has not changed.
+
+Here, ``output_weight_`` is cached as a model attribute and recomputed
+only when the internal state is stale, tracked by the boolean flag
+``_weights_dirty``.  The flag is set to ``True`` by ``fit()`` and by
+any future ``update()`` call, and cleared after the first
+``_get_output_weight()`` computation.
 """
 
 from __future__ import annotations
@@ -69,6 +81,15 @@ class OSELMK:
         Lagrange multipliers ``theta = C * (y - y_hat)``.  Used instead
         of explicit output weights; equivalent to
         ``OutputWeight = R_inv_ @ y_train_``.
+    output_weight_ : ndarray, shape (n_train, n_outputs) or None
+        Cached output weight matrix ``R_inv_ @ y_train_``.  ``None``
+        until the first ``predict()`` call after ``fit()`` or
+        ``update()``.  Recomputed lazily only when ``_weights_dirty``
+        is ``True``.
+    _weights_dirty : bool
+        ``True`` when ``output_weight_`` is stale and must be
+        recomputed before the next prediction.  Set by ``fit()`` and
+        ``update()``; cleared by ``_get_output_weight()``.
     X_train_ : ndarray, shape (n_train, n_features)
         Training inputs retained for kernel evaluations during
         ``predict`` and online updates.
@@ -101,6 +122,10 @@ class OSELMK:
         self.K_elm_: NDArray[np.floating] | None = None
         self.n_train_: int | None = None
 
+        # Prediction cache -- managed by _get_output_weight()
+        self.output_weight_: NDArray[np.floating] | None = None
+        self._weights_dirty: bool = True
+
     # ------------------------------------------------------------------
     # Fit
     # ------------------------------------------------------------------
@@ -122,6 +147,9 @@ class OSELMK:
 
         ``scipy.linalg.solve`` with ``assume_a='pos'`` (Cholesky path) is
         used for numerical stability instead of explicit matrix inversion.
+
+        Sets ``_weights_dirty = True`` so that ``output_weight_`` will be
+        recomputed on the next ``predict()`` call.
 
         Parameters
         ----------
@@ -182,6 +210,10 @@ class OSELMK:
         self.y_train_ = y
         self.n_train_ = n
 
+        # Invalidate the output weight cache
+        self.output_weight_ = None
+        self._weights_dirty = True
+
         return self
 
     # ------------------------------------------------------------------
@@ -193,6 +225,12 @@ class OSELMK:
         X: NDArray[np.floating],
     ) -> NDArray[np.floating]:
         """Predict using the fitted ELMK model.
+
+        Uses the cached ``output_weight_`` (``R_inv_ @ y_train_``) to
+        avoid the O(n^2) recomputation that the original Octave
+        ``predict_os_elmk.m`` performed on every call.  The cache is
+        recomputed only when ``_weights_dirty`` is ``True`` (i.e. after
+        ``fit()`` or ``update()``).
 
         Parameters
         ----------
@@ -215,8 +253,33 @@ class OSELMK:
         K_test = kernel_matrix(
             X, self.X_train_, kernel=self.kernel, params=self.kernel_params
         )
-        y_pred = K_test @ self.theta_
+        y_pred = K_test @ self._get_output_weight()
         return y_pred.squeeze()
+
+    # ------------------------------------------------------------------
+    # Cache management
+    # ------------------------------------------------------------------
+
+    def _get_output_weight(self) -> NDArray[np.floating]:
+        """Return the output weight matrix, recomputing only when stale.
+
+        ``output_weight_ = R_inv_ @ y_train_`` is mathematically
+        equivalent to solving ``(Omega + I/C) w = y``, but expressed
+        using the already-stored ``R_inv_``.  Computing this once and
+        caching it avoids the O(n^2) matrix-vector product on every
+        subsequent ``predict()`` call when the model state is unchanged.
+
+        The cache is invalidated (``_weights_dirty = True``) by
+        ``fit()`` and by any future ``update()`` call.
+
+        Returns
+        -------
+        output_weight_ : ndarray, shape (n_train, n_outputs)
+        """
+        if self._weights_dirty or self.output_weight_ is None:
+            self.output_weight_ = self.R_inv_ @ self.y_train_
+            self._weights_dirty = False
+        return self.output_weight_
 
     # ------------------------------------------------------------------
     # Helpers

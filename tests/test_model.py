@@ -1,4 +1,4 @@
-"""Unit tests for src/oselmk/model.py (offline batch phase)."""
+"""Unit tests for src/oselmk/model.py (offline batch phase + prediction cache)."""
 
 import numpy as np
 import pytest
@@ -21,6 +21,10 @@ Y_TRAIN_2D = Y_TRAIN.reshape(-1, 1)                   # 2-D single output
 
 X_TEST = RNG.uniform(-1.0, 1.0, (10, N_FEATURES))
 
+# A second, disjoint dataset to test cache invalidation on re-fit
+X_TRAIN_B = RNG.uniform(-1.0, 1.0, (N_TRAIN, N_FEATURES))
+Y_TRAIN_B = 5.0 * X_TRAIN_B[:, 0] - X_TRAIN_B[:, 2]
+
 
 # ---------------------------------------------------------------------------
 # Instantiation
@@ -33,6 +37,18 @@ def test_default_instantiation():
     assert model.C == 1.0
     assert model.kernel == "rbf"
     assert model.R_inv_ is None
+
+
+def test_initial_weights_dirty_flag():
+    """_weights_dirty must be True before fit() is called."""
+    model = OSELMK()
+    assert model._weights_dirty is True
+
+
+def test_initial_output_weight_is_none():
+    """output_weight_ must be None before any predict() call."""
+    model = OSELMK()
+    assert model.output_weight_ is None
 
 
 def test_invalid_C_raises():
@@ -54,6 +70,13 @@ def test_fit_runs_for_all_kernels(kernel):
     model = OSELMK(kernel=kernel, C=1.0)
     model.fit(X_TRAIN, Y_TRAIN)
     assert model.R_inv_ is not None
+
+
+def test_fit_sets_weights_dirty():
+    """fit() must set _weights_dirty=True and clear output_weight_."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    assert model._weights_dirty is True
+    assert model.output_weight_ is None
 
 
 def test_fit_accepts_1d_y():
@@ -170,11 +193,10 @@ def test_predict_output_shape():
 
 def test_predict_perfect_on_linear_kernel_low_noise():
     """With linear kernel and high C, training error must be near zero."""
-    # Linear kernel + high C (low regularisation) on a linear target
     model = OSELMK(kernel="linear", C=1e6).fit(X_TRAIN, Y_TRAIN)
     y_pred_train = model.predict(X_TRAIN)
     residuals = np.abs(y_pred_train - Y_TRAIN)
-    assert residuals.max() < 1.0  # generous but meaningful bound
+    assert residuals.max() < 1.0
 
 
 def test_predict_raises_before_fit():
@@ -188,3 +210,83 @@ def test_predict_raises_for_1d_X():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     with pytest.raises(ValueError, match="2-D"):
         model.predict(X_TEST[:, 0])
+
+
+# ---------------------------------------------------------------------------
+# predict() — output weight cache
+# ---------------------------------------------------------------------------
+
+
+def test_output_weight_none_before_predict():
+    """output_weight_ must remain None until the first predict() call."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    assert model.output_weight_ is None
+
+
+def test_output_weight_populated_after_predict():
+    """output_weight_ must be set after the first predict() call."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)
+    assert model.output_weight_ is not None
+
+
+def test_weights_dirty_false_after_predict():
+    """_weights_dirty must be False after predict() clears the cache."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)
+    assert model._weights_dirty is False
+
+
+def test_output_weight_cached_same_object_on_repeated_predict():
+    """Repeated predict() calls must return the same cached weight object."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)  # populates cache
+    w_first = model.output_weight_
+    model.predict(X_TEST)  # must reuse cache
+    w_second = model.output_weight_
+    assert w_first is w_second  # same object in memory, not just equal values
+
+
+def test_output_weight_invalidated_after_refit():
+    """Re-fitting the model must invalidate the cache (output_weight_=None)."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)  # populates cache
+    assert model.output_weight_ is not None
+
+    model.fit(X_TRAIN_B, Y_TRAIN_B)  # re-fit on different data
+    assert model.output_weight_ is None
+    assert model._weights_dirty is True
+
+
+def test_output_weight_changes_after_refit():
+    """Weight cached after re-fit must differ from the original weight."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)
+    w_before = model.output_weight_.copy()
+
+    model.fit(X_TRAIN_B, Y_TRAIN_B)
+    model.predict(X_TEST)  # recomputes with new data
+    w_after = model.output_weight_
+
+    assert not np.allclose(w_before, w_after)
+
+
+def test_output_weight_shape():
+    """output_weight_ must have shape (n_train, n_outputs) after predict()."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)
+    assert model.output_weight_.shape == (N_TRAIN, 1)
+
+
+def test_predict_results_consistent_with_and_without_cache():
+    """Predictions from cache and from direct theta must be numerically equal."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    y_cached = model.predict(X_TEST)  # uses cached output_weight_
+
+    # Direct computation via theta_ (as in the Commit 6 implementation)
+    K_test = __import__('oselmk.utils.kernels', fromlist=['kernel_matrix']).kernel_matrix(
+        X_TEST, X_TRAIN, kernel='rbf'
+    )
+    y_direct = (K_test @ model.theta_).squeeze()
+
+    assert_allclose(y_cached, y_direct, atol=1e-12)
