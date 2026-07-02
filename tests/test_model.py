@@ -190,7 +190,7 @@ def test_weights_dirty_false_after_predict():
 def test_output_weight_cached_same_object_on_repeated_predict():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
-    assert model.output_weight_ is model.predict(X_TEST) or (model.predict(X_TEST) or True)
+    # assert model.output_weight_ is model.predict(X_TEST) or (model.predict(X_TEST) or True)
     w1 = model.output_weight_
     model.predict(X_TEST)
     assert model.output_weight_ is w1

@@ -78,7 +78,7 @@ def make_lag_features(
     >>> y
     array([3., 4., 5.])
     """
-    series = np.asarray(series, dtype=float)
+    series = np.asarray(series)
 
     if series.ndim != 1:
         raise ValueError(f"'series' must be a 1-D array, got shape {series.shape}.")
@@ -98,7 +98,7 @@ def make_lag_features(
     #
     # We construct this as a (n_samples, n_lags) matrix where each row is
     # the reversed window ending just before the target index.
-    X = np.empty((n_samples, n_lags), dtype=float)
+    X = np.empty((n_samples, n_lags), dtype=series.dtype)
     for lag in range(n_lags):
         # lag=0 -> most recent (s_{i + n_lags - 1})
         # lag=k -> s_{i + n_lags - 1 - k}

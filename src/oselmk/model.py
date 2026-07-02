@@ -337,7 +337,7 @@ class OSELMK:
 
         # Block-matrix inverse update               shape (n+bs, n+bs)
         R11 = R_inv + G @ gamma_inv @ G.T  # (n,  n)
-        R12 = -(G @ gamma_inv)  # (n,  bs)
+        R12 = G @ gamma_inv  # (n,  bs)
         R_inv_expanded = np.block([[R11, R12], [R12.T, gamma_inv]])
 
         # Expanded kernel matrix                    shape (n+bs, n+bs)

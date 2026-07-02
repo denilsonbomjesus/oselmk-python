@@ -50,7 +50,7 @@ class ZScoreNormalizer:
         Number of features seen during :meth:`fit`.
     """
 
-    def __init__(self, ddof: int = 1) -> None:
+    def __init__(self, ddof: int = 0) -> None:
         self.ddof = ddof
         self.mean_: NDArray[np.floating] | None = None
         self.std_: NDArray[np.floating] | None = None
@@ -94,6 +94,14 @@ class ZScoreNormalizer:
         self : ZScoreNormalizer
             Fitted normalizer (for method chaining).
         """
+
+        """Compute mean and std from *X* to be used for later scaling."""
+        X_arr = np.asarray(X)
+        if X_arr.shape[0] == 0:
+            raise ValueError("Expected at least one sample.")
+        if X_arr.ndim != 2:
+            raise ValueError("Expected a 2-D array.")
+        
         X = self._to_2d(X)
         self.n_features_in_ = X.shape[1]
         self.mean_ = np.mean(X, axis=0)
