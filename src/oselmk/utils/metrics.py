@@ -24,7 +24,7 @@ Metrics
     Returns ``nan`` when *all* true values are near zero.
 
 ``smape``
-    Symmetric MAPE: bounded in ``[0, 2]``.
+    Symmetric MAPE, bounded in ``[0, 2]``.
     Uses ``(|y_true| + |y_pred|) / 2`` as denominator; pairs where the
     denominator is zero contribute 0 to the mean.
 
