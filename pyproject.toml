@@ -9,7 +9,7 @@ description = "Online Sequential Extreme Learning Machine with Kernels (OS-ELMK)
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Denilson Bom Jesus", email = "denilsonbomjesus@gmail.com" }
+    { name = "denilsonbomjesus" }
 ]
 requires-python = ">=3.10"
 dependencies = [
