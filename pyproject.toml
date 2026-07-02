@@ -50,16 +50,17 @@ ignore = [
     "N803",  # argument name should be lowercase
     "N806",  # variable in function should be lowercase
     # --- Type annotation quoting -------------------------------------------
-    # The package uses `from __future__ import annotations` (PEP 563) so
-    # all annotations are strings at runtime; removing quotes breaks nothing
-    # but UP037 fires spuriously.  Suppress it.
+    # UP037 fires spuriously on some ruff versions; suppress it.
     "UP037",
 ]
+
+[tool.ruff.lint.isort]
+# Prevent I001 on mixed `import X` / `from X.Y import Z` blocks
+# that belong to the same section (e.g. numpy + numpy.typing).
+force-sort-within-sections = true
 
 [tool.ruff.lint.per-file-ignores]
 # tests: assert statements are fine
 "tests/*" = ["S101"]
-# examples: sys.path is inserted before package imports intentionally;
-# ruff-isort cannot reorder across that barrier without breaking the
-# path-insertion side-effect.
+# examples: sys.path insertion before package imports is intentional
 "examples/*" = ["I001"]
