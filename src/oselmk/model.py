@@ -1,7 +1,6 @@
 """OS-ELMK: Online Sequential Extreme Learning Machine with Kernels.
 
-This module implements the offline batch phase (ELMK) of the OS-ELMK
-algorithm proposed in:
+This module implements the OS-ELMK algorithm proposed in:
 
     Huang, G., et al. (2014). "Online sequential extreme learning machine
     with kernels for nonstationary time series prediction."
@@ -39,9 +38,29 @@ operation that is redundant when the model state has not changed.
 
 Here, ``output_weight_`` is cached as a model attribute and recomputed
 only when the internal state is stale, tracked by the boolean flag
-``_weights_dirty``.  The flag is set to ``True`` by ``fit()`` and by
-any future ``update()`` call, and cleared after the first
-``_get_output_weight()`` computation.
+``_weights_dirty``.  The flag is set to ``True`` by ``fit()`` and
+``update()``; cleared after the first ``_get_output_weight()`` call.
+
+Sequential update (incremental learning)
+-----------------------------------------
+Equations referenced below are from the paper (Section 2.3)::
+
+    Eq. 17 : G      = -R_inv @ K_cross          (sensitivity)
+    Eq. 20 : theta* = [theta + G @ theta_new,
+                        theta_new]               (stacked multipliers)
+    Eq. 26 : gamma  = K_new_new + I_bs/C
+                      + K_cross.T @ G            (Schur complement)
+    Eq. 27 : theta_new = gamma^{-1} @ E_bs       (new-block multipliers)
+
+    Block matrix inverse (R_inv update, derived from Schur complement):
+
+        R11 = R_inv + G @ gamma_inv @ G.T
+        R12 = -G @ gamma_inv
+        R21 = R12.T
+        R22 = gamma_inv
+
+        R_inv_new = [[R11, R12],
+                     [R21, R22]]
 """
 
 from __future__ import annotations
@@ -74,32 +93,24 @@ class OSELMK:
 
     Attributes
     ----------
-    R_inv_ : ndarray, shape (n_train, n_train)
-        Inverse of the regularised kernel matrix
-        ``(Omega_train + I / C)``.  Stored for sequential updates.
-    theta_ : ndarray, shape (n_train, n_outputs)
-        Lagrange multipliers ``theta = C * (y - y_hat)``.  Used instead
-        of explicit output weights; equivalent to
-        ``OutputWeight = R_inv_ @ y_train_``.
-    output_weight_ : ndarray, shape (n_train, n_outputs) or None
-        Cached output weight matrix ``R_inv_ @ y_train_``.  ``None``
-        until the first ``predict()`` call after ``fit()`` or
-        ``update()``.  Recomputed lazily only when ``_weights_dirty``
-        is ``True``.
+    R_inv_ : ndarray, shape (n_support, n_support)
+        Inverse of the regularised kernel matrix.  Grows with each
+        sequential update; stays fixed size with decremental updates.
+    theta_ : ndarray, shape (n_support, n_outputs)
+        Lagrange multipliers.  Equivalent to ``R_inv_ @ y_train_``.
+    output_weight_ : ndarray, shape (n_support, n_outputs) or None
+        Cached output weight matrix.  ``None`` until the first
+        ``predict()`` call after ``fit()`` or ``update()``.
     _weights_dirty : bool
-        ``True`` when ``output_weight_`` is stale and must be
-        recomputed before the next prediction.  Set by ``fit()`` and
-        ``update()``; cleared by ``_get_output_weight()``.
-    X_train_ : ndarray, shape (n_train, n_features)
-        Training inputs retained for kernel evaluations during
-        ``predict`` and online updates.
-    y_train_ : ndarray, shape (n_train, n_outputs)
-        Training targets retained for online updates.
-    K_elm_ : ndarray, shape (n_train, n_train)
-        Kernel matrix ``Omega_train`` (without regularisation).  Stored
-        so that sequential updates can extend it without recomputation.
+        Cache invalidation flag.  Set by ``fit()`` and ``update()``.
+    X_train_ : ndarray, shape (n_support, n_features)
+        Support inputs.
+    y_train_ : ndarray, shape (n_support, n_outputs)
+        Support targets.
+    K_elm_ : ndarray, shape (n_support, n_support)
+        Kernel matrix (without regularisation).
     n_train_ : int
-        Number of training samples seen during ``fit``.
+        Current number of support vectors.
     """
 
     def __init__(
@@ -114,7 +125,6 @@ class OSELMK:
         self.kernel = kernel
         self.kernel_params = kernel_params
 
-        # Fitted attributes -- set by fit()
         self.R_inv_: NDArray[np.floating] | None = None
         self.theta_: NDArray[np.floating] | None = None
         self.X_train_: NDArray[np.floating] | None = None
@@ -122,7 +132,6 @@ class OSELMK:
         self.K_elm_: NDArray[np.floating] | None = None
         self.n_train_: int | None = None
 
-        # Prediction cache -- managed by _get_output_weight()
         self.output_weight_: NDArray[np.floating] | None = None
         self._weights_dirty: bool = True
 
@@ -137,83 +146,175 @@ class OSELMK:
     ) -> "OSELMK":
         """Train the ELMK model on a batch of data (offline phase).
 
-        Computes the regularised kernel matrix::
-
-            A = Omega_train + I / C
-
-        and solves the system to obtain the Lagrange multipliers::
-
-            A @ theta = y_train
-
-        ``scipy.linalg.solve`` with ``assume_a='pos'`` (Cholesky path) is
-        used for numerical stability instead of explicit matrix inversion.
-
-        Sets ``_weights_dirty = True`` so that ``output_weight_`` will be
-        recomputed on the next ``predict()`` call.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-            Training inputs.
         y : array-like, shape (n_samples,) or (n_samples, n_outputs)
-            Training targets.
 
         Returns
         -------
-        self : OSELMK
-            Fitted estimator.
+        self
         """
-        X = np.asarray(X, dtype=float)
-        y = np.asarray(y, dtype=float)
-
-        if X.ndim != 2:
-            raise ValueError(
-                f"X must be a 2-D array of shape (n_samples, n_features), "
-                f"got shape {X.shape}."
-            )
-        if y.ndim == 1:
-            y = y.reshape(-1, 1)
-        if y.ndim != 2:
-            raise ValueError(
-                f"y must be 1-D or 2-D, got shape {y.shape}."
-            )
-        if X.shape[0] != y.shape[0]:
-            raise ValueError(
-                f"X and y must have the same number of samples. "
-                f"Got X: {X.shape[0]}, y: {y.shape[0]}."
-            )
-
+        X, y = self._validate_Xy(X, y)
         n = X.shape[0]
 
-        # --- kernel matrix (n x n) ----------------------------------------
         K = kernel_matrix(X, X, kernel=self.kernel, params=self.kernel_params)
-
-        # --- regularised system matrix ------------------------------------
-        # A = Omega + I/C  (Eq. 17 in the paper)
         A = K + np.eye(n) / self.C
-
-        # --- solve A @ theta = y  (numerically stable, no explicit inv) ---
-        # assume_a='pos': A is symmetric positive definite -> Cholesky path
         theta = linalg.solve(A, y, assume_a="pos")
-
-        # --- store R_inv_ for online updates  (R_inv = A^{-1}) ------------
-        # We need the explicit inverse for the rank-1 / rank-bs update
-        # formulas (Eqs. 20, 26-27 in the paper).  We compute it by solving
-        # A @ R_inv = I, reusing the same factorisation.
         R_inv = linalg.solve(A, np.eye(n), assume_a="pos")
 
-        # --- store fitted attributes --------------------------------------
         self.K_elm_ = K
         self.R_inv_ = R_inv
         self.theta_ = theta
         self.X_train_ = X
         self.y_train_ = y
         self.n_train_ = n
-
-        # Invalidate the output weight cache
         self.output_weight_ = None
         self._weights_dirty = True
+        return self
 
+    # ------------------------------------------------------------------
+    # Online update
+    # ------------------------------------------------------------------
+
+    def update(
+        self,
+        X_new: NDArray[np.floating],
+        y_new: NDArray[np.floating],
+        mode: Literal["sequential"] = "sequential",
+    ) -> "OSELMK":
+        """Update the model online with a new block of data.
+
+        Implements the sequential (incremental) update from Section 2.3
+        of the paper.  The model expands its support set by ``bs`` new
+        samples without recomputing the full kernel matrix from scratch.
+
+        The update follows the Schur complement block-matrix inversion
+        identity to extend ``R_inv_`` in O(n * bs + bs^3) instead of
+        re-solving the full O(n^3) system.
+
+        Equations (paper notation)
+        --------------------------
+        Let ``n`` = current support size, ``bs`` = block size.
+
+        K_cross  : kernel(X_train_, X_new)          shape (n,  bs)
+        K_new    : kernel(X_new, X_new)             shape (bs, bs)
+
+        G        = -R_inv @ K_cross                 (Eq. 17)  (n,  bs)
+        gamma    = K_new + I_bs/C + K_cross.T @ G   (Eq. 26)  (bs, bs)
+        E_bs     = y_new - K_cross.T @ R_inv @ y_train_       (bs, n_out)
+                 = y_new - K_cross.T @ output_weight_
+        theta_new = gamma^{-1} @ E_bs               (Eq. 27)  (bs, n_out)
+
+        # Stacked multipliers (Eq. 20)
+        delta_theta = G @ theta_new                 (n,  n_out)
+        theta*      = [theta + delta_theta;
+                       theta_new]
+
+        # Block-matrix inverse update (derived from Schur complement)
+        gamma_inv = inv(gamma)                      (bs, bs)
+        R11 = R_inv + G @ gamma_inv @ G.T           (n,  n)
+        R12 = -G @ gamma_inv                        (n,  bs)
+        R_inv_new = [[R11, R12],
+                     [R12.T, gamma_inv]]            (n+bs, n+bs)
+
+        Parameters
+        ----------
+        X_new : array-like, shape (bs, n_features)
+            New input block.
+        y_new : array-like, shape (bs,) or (bs, n_outputs)
+            New target block.
+        mode : {'sequential'}, default 'sequential'
+            Update mode.  Only ``'sequential'`` is supported in this
+            commit; ``'decremental'`` will be added in the next commit.
+
+        Returns
+        -------
+        self
+        """
+        self._check_is_fitted()
+
+        if mode != "sequential":
+            raise NotImplementedError(
+                f"mode='{mode}' is not implemented yet. "
+                "Only 'sequential' is currently supported."
+            )
+
+        X_new, y_new = self._validate_Xy(X_new, y_new)
+        bs = X_new.shape[0]
+
+        # Current state
+        R_inv = self.R_inv_      # (n, n)
+        theta = self.theta_      # (n, n_out)
+        X_old = self.X_train_    # (n, d)
+        K_old = self.K_elm_      # (n, n)
+        w = self._get_output_weight()  # (n, n_out) -- reuse cached weights
+
+        # --- cross-kernel: existing support vs new block -----------------
+        # K_cross[i, j] = k(x_old_i, x_new_j)     shape (n, bs)
+        K_cross = kernel_matrix(
+            X_old, X_new, kernel=self.kernel, params=self.kernel_params
+        )
+
+        # --- kernel of new block with itself -----------------------------
+        # K_new[i, j] = k(x_new_i, x_new_j)       shape (bs, bs)
+        K_new = kernel_matrix(
+            X_new, X_new, kernel=self.kernel, params=self.kernel_params
+        )
+
+        # --- Eq. 17: sensitivity matrix ----------------------------------
+        # G = -R_inv @ K_cross                     shape (n, bs)
+        G = -(R_inv @ K_cross)
+
+        # --- Eq. 26: Schur complement (gamma) ----------------------------
+        # gamma = K_new + I_bs/C + K_cross.T @ G   shape (bs, bs)
+        gamma = K_new + np.eye(bs) / self.C + K_cross.T @ G
+
+        # Solve gamma^{-1} once; reused for theta_new and R_inv update
+        # gamma is symmetric positive definite (Schur complement of SPD)
+        gamma_inv = linalg.solve(gamma, np.eye(bs), assume_a="pos")
+
+        # --- Eq. 27: new-block Lagrange multipliers ----------------------
+        # E_bs = y_new - K_cross.T @ w             shape (bs, n_out)
+        E_bs = y_new - K_cross.T @ w
+        # theta_new = gamma_inv @ E_bs             shape (bs, n_out)
+        theta_new = gamma_inv @ E_bs
+
+        # --- Eq. 20: update existing multipliers -------------------------
+        # delta_theta = G @ theta_new              shape (n, n_out)
+        delta_theta = G @ theta_new
+        theta_star = np.vstack([theta + delta_theta, theta_new])
+
+        # --- Block-matrix inverse update ---------------------------------
+        # R11 = R_inv + G @ gamma_inv @ G.T        shape (n, n)
+        R11 = R_inv + G @ gamma_inv @ G.T
+        # R12 = -G @ gamma_inv                     shape (n, bs)
+        R12 = -(G @ gamma_inv)
+        # R22 = gamma_inv                          shape (bs, bs)
+        R_inv_new = np.block([[R11, R12],
+                              [R12.T, gamma_inv]])
+
+        # --- Extend kernel matrix ----------------------------------------
+        # Full expanded kernel (n+bs, n+bs)
+        K_bottom_left = K_cross.T                              # (bs, n)
+        K_bottom_right = K_new                                 # (bs, bs)
+        K_top_right = K_cross                                  # (n, bs)
+        K_new_full = np.block([
+            [K_old,          K_top_right],
+            [K_bottom_left,  K_bottom_right],
+        ])
+
+        # --- Store updated state -----------------------------------------
+        self.R_inv_ = R_inv_new
+        self.theta_ = theta_star
+        self.X_train_ = np.vstack([X_old, X_new])
+        self.y_train_ = np.vstack([self.y_train_, y_new])
+        self.K_elm_ = K_new_full
+        self.n_train_ = self.n_train_ + bs
+
+        # Invalidate prediction cache
+        self.output_weight_ = None
+        self._weights_dirty = True
         return self
 
     # ------------------------------------------------------------------
@@ -224,58 +325,35 @@ class OSELMK:
         self,
         X: NDArray[np.floating],
     ) -> NDArray[np.floating]:
-        """Predict using the fitted ELMK model.
+        """Predict using the current model state.
 
-        Uses the cached ``output_weight_`` (``R_inv_ @ y_train_``) to
-        avoid the O(n^2) recomputation that the original Octave
-        ``predict_os_elmk.m`` performed on every call.  The cache is
-        recomputed only when ``_weights_dirty`` is ``True`` (i.e. after
-        ``fit()`` or ``update()``).
+        Uses the cached ``output_weight_`` (``R_inv_ @ y_train_``) and
+        recomputes only when the state is stale.
 
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-            Input samples.
 
         Returns
         -------
-        y_pred : ndarray, shape (n_samples,) or (n_samples, n_outputs)
-            Predicted values.  Single-output predictions are squeezed to 1-D.
+        y_pred : ndarray, shape (n_samples,) for single-output.
         """
         self._check_is_fitted()
         X = np.asarray(X, dtype=float)
         if X.ndim != 2:
-            raise ValueError(
-                f"X must be a 2-D array, got shape {X.shape}."
-            )
+            raise ValueError(f"X must be a 2-D array, got shape {X.shape}.")
 
-        # kernel between test samples and training samples
         K_test = kernel_matrix(
             X, self.X_train_, kernel=self.kernel, params=self.kernel_params
         )
-        y_pred = K_test @ self._get_output_weight()
-        return y_pred.squeeze()
+        return (K_test @ self._get_output_weight()).squeeze()
 
     # ------------------------------------------------------------------
     # Cache management
     # ------------------------------------------------------------------
 
     def _get_output_weight(self) -> NDArray[np.floating]:
-        """Return the output weight matrix, recomputing only when stale.
-
-        ``output_weight_ = R_inv_ @ y_train_`` is mathematically
-        equivalent to solving ``(Omega + I/C) w = y``, but expressed
-        using the already-stored ``R_inv_``.  Computing this once and
-        caching it avoids the O(n^2) matrix-vector product on every
-        subsequent ``predict()`` call when the model state is unchanged.
-
-        The cache is invalidated (``_weights_dirty = True``) by
-        ``fit()`` and by any future ``update()`` call.
-
-        Returns
-        -------
-        output_weight_ : ndarray, shape (n_train, n_outputs)
-        """
+        """Return ``R_inv_ @ y_train_``, computing only when stale."""
         if self._weights_dirty or self.output_weight_ is None:
             self.output_weight_ = self.R_inv_ @ self.y_train_
             self._weights_dirty = False
@@ -284,6 +362,30 @@ class OSELMK:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_Xy(
+        X: NDArray[np.floating],
+        y: NDArray[np.floating],
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Coerce and validate (X, y) inputs."""
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if X.ndim != 2:
+            raise ValueError(
+                f"X must be a 2-D array of shape (n_samples, n_features), "
+                f"got shape {X.shape}."
+            )
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+        if y.ndim != 2:
+            raise ValueError(f"y must be 1-D or 2-D, got shape {y.shape}.")
+        if X.shape[0] != y.shape[0]:
+            raise ValueError(
+                f"X and y must have the same number of samples. "
+                f"Got X: {X.shape[0]}, y: {y.shape[0]}."
+            )
+        return X, y
 
     def _check_is_fitted(self) -> None:
         """Raise RuntimeError if the model has not been fitted yet."""
