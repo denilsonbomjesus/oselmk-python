@@ -50,9 +50,7 @@ def _validate(y_true: NDArray, y_pred: NDArray) -> tuple[NDArray, NDArray]:
     if y_true.size == 0:
         raise ValueError("y_true and y_pred must not be empty.")
     if y_true.shape != y_pred.shape:
-        raise ValueError(
-            f"Shape mismatch: y_true has {y_true.shape}, y_pred has {y_pred.shape}."
-        )
+        raise ValueError(f"Shape mismatch: y_true has {y_true.shape}, y_pred has {y_pred.shape}.")
     return y_true, y_pred
 
 
@@ -164,8 +162,8 @@ def compute_all(
         Keys: ``'rmse'``, ``'nrmse'``, ``'mape'``, ``'smape'``.
     """
     return {
-        "rmse":  rmse(y_true, y_pred),
+        "rmse": rmse(y_true, y_pred),
         "nrmse": nrmse(y_true, y_pred),
-        "mape":  mape(y_true, y_pred),
+        "mape": mape(y_true, y_pred),
         "smape": smape(y_true, y_pred),
     }

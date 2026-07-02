@@ -74,9 +74,7 @@ class ZScoreNormalizer:
         if X.ndim == 1:
             return X.reshape(-1, 1)
         if X.ndim != 2:
-            raise ValueError(
-                f"Expected a 1-D or 2-D array, got shape {X.shape}."
-            )
+            raise ValueError(f"Expected a 1-D or 2-D array, got shape {X.shape}.")
         return X
 
     # ------------------------------------------------------------------
@@ -131,9 +129,7 @@ class ZScoreNormalizer:
         X = self._to_2d(X)
 
         if X.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"Expected {self.n_features_in_} features, got {X.shape[1]}."
-            )
+            raise ValueError(f"Expected {self.n_features_in_} features, got {X.shape[1]}.")
 
         X_norm = (X - self.mean_) / self.std_
         return X_norm.ravel() if was_1d else X_norm
@@ -155,9 +151,7 @@ class ZScoreNormalizer:
         X_norm = self._to_2d(X_norm)
 
         if X_norm.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"Expected {self.n_features_in_} features, got {X_norm.shape[1]}."
-            )
+            raise ValueError(f"Expected {self.n_features_in_} features, got {X_norm.shape[1]}.")
 
         X = X_norm * self.std_ + self.mean_
         return X.ravel() if was_1d else X

@@ -175,8 +175,7 @@ def save_run(
 
     if y_true.shape != y_pred.shape:
         raise ValueError(
-            f"y_true and y_pred must have the same length. "
-            f"Got {len(y_true)} and {len(y_pred)}."
+            f"y_true and y_pred must have the same length. Got {len(y_true)} and {len(y_pred)}."
         )
     if len(y_true) == 0:
         raise ValueError("y_true and y_pred must not be empty.")

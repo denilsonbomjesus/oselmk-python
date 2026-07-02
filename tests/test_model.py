@@ -34,17 +34,21 @@ Y_NEW = 2.0 * X_NEW[:, 0] + 3.0 * X_NEW[:, 1]
 # Instantiation
 # ---------------------------------------------------------------------------
 
+
 def test_default_instantiation():
     model = OSELMK()
     assert model.C == 1.0
     assert model.kernel == "rbf"
     assert model.R_inv_ is None
 
+
 def test_initial_weights_dirty_flag():
     assert OSELMK()._weights_dirty is True
 
+
 def test_initial_output_weight_is_none():
     assert OSELMK().output_weight_ is None
+
 
 def test_invalid_C_raises():
     with pytest.raises(ValueError, match="strictly positive"):
@@ -57,60 +61,74 @@ def test_invalid_C_raises():
 # fit()
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("kernel", ["rbf", "linear", "poly", "wavelet"])
 def test_fit_runs_for_all_kernels(kernel):
     model = OSELMK(kernel=kernel, C=1.0).fit(X_TRAIN, Y_TRAIN)
     assert model.R_inv_ is not None
+
 
 def test_fit_sets_weights_dirty():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model._weights_dirty is True
     assert model.output_weight_ is None
 
+
 def test_fit_accepts_1d_y():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.y_train_.shape == (N_TRAIN, 1)
+
 
 def test_fit_accepts_2d_y():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN_2D)
     assert model.y_train_.shape == (N_TRAIN, 1)
 
+
 def test_fit_returns_self():
     model = OSELMK()
     assert model.fit(X_TRAIN, Y_TRAIN) is model
+
 
 def test_R_inv_is_square():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.R_inv_.shape == (N_TRAIN, N_TRAIN)
 
+
 def test_theta_shape_single_output():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.theta_.shape == (N_TRAIN, 1)
+
 
 def test_K_elm_shape():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.K_elm_.shape == (N_TRAIN, N_TRAIN)
 
+
 def test_X_train_stored_correctly():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert_allclose(model.X_train_, X_TRAIN)
+
 
 def test_n_train_stored_correctly():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.n_train_ == N_TRAIN
 
+
 def test_R_inv_is_symmetric():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert_allclose(model.R_inv_, model.R_inv_.T, atol=1e-10)
+
 
 def test_R_inv_times_A_is_identity():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     A = model.K_elm_ + np.eye(N_TRAIN) / model.C
     assert_allclose(model.R_inv_ @ A, np.eye(N_TRAIN), atol=1e-10)
 
+
 def test_fit_raises_for_1d_X():
     with pytest.raises(ValueError, match="2-D"):
         OSELMK().fit(X_TRAIN[:, 0], Y_TRAIN)
+
 
 def test_fit_raises_for_shape_mismatch():
     with pytest.raises(ValueError, match="same number of samples"):
@@ -121,21 +139,26 @@ def test_fit_raises_for_shape_mismatch():
 # predict()
 # ---------------------------------------------------------------------------
 
+
 def test_predict_runs_after_fit():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert isinstance(model.predict(X_TEST), np.ndarray)
+
 
 def test_predict_output_shape():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.predict(X_TEST).shape == (X_TEST.shape[0],)
 
+
 def test_predict_perfect_on_linear_kernel_low_noise():
     model = OSELMK(kernel="linear", C=1e6).fit(X_TRAIN, Y_TRAIN)
     assert np.abs(model.predict(X_TRAIN) - Y_TRAIN).max() < 1.0
 
+
 def test_predict_raises_before_fit():
     with pytest.raises(RuntimeError, match="not fitted"):
         OSELMK().predict(X_TEST)
+
 
 def test_predict_raises_for_1d_X():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -147,29 +170,31 @@ def test_predict_raises_for_1d_X():
 # predict() -- output weight cache
 # ---------------------------------------------------------------------------
 
+
 def test_output_weight_none_before_predict():
     assert OSELMK().fit(X_TRAIN, Y_TRAIN).output_weight_ is None
+
 
 def test_output_weight_populated_after_predict():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
     assert model.output_weight_ is not None
 
+
 def test_weights_dirty_false_after_predict():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
     assert model._weights_dirty is False
 
+
 def test_output_weight_cached_same_object_on_repeated_predict():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
-    assert model.output_weight_ is model.predict(X_TEST) or (
-        model.predict(X_TEST)
-        or True
-    )
+    assert model.output_weight_ is model.predict(X_TEST) or (model.predict(X_TEST) or True)
     w1 = model.output_weight_
     model.predict(X_TEST)
     assert model.output_weight_ is w1
+
 
 def test_output_weight_invalidated_after_refit():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -177,6 +202,7 @@ def test_output_weight_invalidated_after_refit():
     model.fit(X_TRAIN_B, Y_TRAIN_B)
     assert model.output_weight_ is None
     assert model._weights_dirty is True
+
 
 def test_output_weight_changes_after_refit():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -186,10 +212,12 @@ def test_output_weight_changes_after_refit():
     model.predict(X_TEST)
     assert not np.allclose(w_before, model.output_weight_)
 
+
 def test_output_weight_shape():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
     assert model.output_weight_.shape == (N_TRAIN, 1)
+
 
 def test_predict_results_consistent_with_cache():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -203,11 +231,13 @@ def test_predict_results_consistent_with_cache():
 # update() -- sequential mode
 # ---------------------------------------------------------------------------
 
+
 def test_update_sequential_increases_n_train():
     """After update, n_train_ must grow by the block size."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="sequential")
     assert model.n_train_ == N_TRAIN + BS
+
 
 def test_update_sequential_expands_R_inv_shape():
     """R_inv_ must be (n+bs, n+bs) after a sequential update."""
@@ -216,11 +246,13 @@ def test_update_sequential_expands_R_inv_shape():
     expected = N_TRAIN + BS
     assert model.R_inv_.shape == (expected, expected)
 
+
 def test_update_sequential_expands_theta_shape():
     """theta_ must be (n+bs, 1) after a sequential update."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="sequential")
     assert model.theta_.shape == (N_TRAIN + BS, 1)
+
 
 def test_update_sequential_expands_K_elm_shape():
     """K_elm_ must be (n+bs, n+bs) after a sequential update."""
@@ -229,6 +261,7 @@ def test_update_sequential_expands_K_elm_shape():
     expected = N_TRAIN + BS
     assert model.K_elm_.shape == (expected, expected)
 
+
 def test_update_sequential_expands_X_train():
     """X_train_ must contain old and new rows after update."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -236,6 +269,7 @@ def test_update_sequential_expands_X_train():
     assert model.X_train_.shape == (N_TRAIN + BS, N_FEATURES)
     assert_allclose(model.X_train_[:N_TRAIN], X_TRAIN)
     assert_allclose(model.X_train_[N_TRAIN:], X_NEW)
+
 
 def test_update_sequential_invalidates_cache():
     """update() must set _weights_dirty=True and clear output_weight_."""
@@ -246,15 +280,18 @@ def test_update_sequential_invalidates_cache():
     assert model._weights_dirty is True
     assert model.output_weight_ is None
 
+
 def test_update_sequential_returns_self():
     """update() must return self (fluent interface)."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     assert model.update(X_NEW, Y_NEW) is model
 
+
 def test_update_before_fit_raises():
     """update() must raise RuntimeError if called before fit()."""
     with pytest.raises(RuntimeError, match="not fitted"):
         OSELMK().update(X_NEW, Y_NEW)
+
 
 def test_update_unknown_mode_raises():
     """update() with an unknown mode must raise NotImplementedError."""
@@ -262,11 +299,13 @@ def test_update_unknown_mode_raises():
     with pytest.raises(NotImplementedError):
         model.update(X_NEW, Y_NEW, mode="invalid_mode")
 
+
 def test_update_sequential_R_inv_is_symmetric():
     """R_inv_ must remain symmetric after a sequential update."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW)
     assert_allclose(model.R_inv_, model.R_inv_.T, atol=1e-9)
+
 
 def test_update_sequential_R_inv_times_A_is_identity():
     """R_inv_ @ A must be close to identity after update."""
@@ -275,6 +314,7 @@ def test_update_sequential_R_inv_times_A_is_identity():
     n = model.n_train_
     A = model.K_elm_ + np.eye(n) / model.C
     assert_allclose(model.R_inv_ @ A, np.eye(n), atol=1e-8)
+
 
 def test_update_sequential_multiple_blocks():
     """Two sequential updates must grow n_train_ by 2*bs."""
@@ -290,11 +330,13 @@ def test_update_sequential_multiple_blocks():
 # update() -- decremental mode
 # ---------------------------------------------------------------------------
 
+
 def test_update_decremental_preserves_n_train():
     """Decremental update must keep n_train_ unchanged."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert model.n_train_ == N_TRAIN
+
 
 def test_update_decremental_preserves_R_inv_shape():
     """R_inv_ shape must remain (n, n) after a decremental update."""
@@ -302,15 +344,18 @@ def test_update_decremental_preserves_R_inv_shape():
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert model.R_inv_.shape == (N_TRAIN, N_TRAIN)
 
+
 def test_update_decremental_preserves_theta_shape():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert model.theta_.shape == (N_TRAIN, 1)
 
+
 def test_update_decremental_preserves_K_elm_shape():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert model.K_elm_.shape == (N_TRAIN, N_TRAIN)
+
 
 def test_update_decremental_slides_window():
     """After decremental update, the first BS rows of X_train_ must
@@ -319,8 +364,9 @@ def test_update_decremental_slides_window():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     X_before = model.X_train_.copy()
     model.update(X_NEW, Y_NEW, mode="decremental")
-    assert_allclose(model.X_train_[:N_TRAIN - BS], X_before[BS:])
-    assert_allclose(model.X_train_[N_TRAIN - BS:], X_NEW)
+    assert_allclose(model.X_train_[: N_TRAIN - BS], X_before[BS:])
+    assert_allclose(model.X_train_[N_TRAIN - BS :], X_NEW)
+
 
 def test_update_decremental_invalidates_cache():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -329,10 +375,12 @@ def test_update_decremental_invalidates_cache():
     assert model._weights_dirty is True
     assert model.output_weight_ is None
 
+
 def test_update_decremental_R_inv_is_symmetric():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert_allclose(model.R_inv_, model.R_inv_.T, atol=1e-9)
+
 
 def test_update_decremental_R_inv_times_A_is_identity():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -340,6 +388,7 @@ def test_update_decremental_R_inv_times_A_is_identity():
     n = model.n_train_
     A = model.K_elm_ + np.eye(n) / model.C
     assert_allclose(model.R_inv_ @ A, np.eye(n), atol=1e-8)
+
 
 def test_update_decremental_multiple_rounds():
     """Five rounds of decremental updates must keep n_train_ stable."""
@@ -355,20 +404,24 @@ def test_update_decremental_multiple_rounds():
 # predict() after update
 # ---------------------------------------------------------------------------
 
+
 def test_predict_after_sequential_update_runs():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW)
     assert isinstance(model.predict(X_TEST), np.ndarray)
+
 
 def test_predict_after_decremental_update_runs():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW, mode="decremental")
     assert isinstance(model.predict(X_TEST), np.ndarray)
 
+
 def test_predict_shape_after_sequential_update():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.update(X_NEW, Y_NEW)
     assert model.predict(X_TEST).shape == (X_TEST.shape[0],)
+
 
 def test_predict_shape_after_decremental_update():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
@@ -379,6 +432,7 @@ def test_predict_shape_after_decremental_update():
 # ---------------------------------------------------------------------------
 # Kernel parametrisation
 # ---------------------------------------------------------------------------
+
 
 def test_kernel_params_passed_to_kernel_matrix():
     """Custom kernel_params must change the output weight."""
@@ -393,10 +447,11 @@ def test_kernel_params_passed_to_kernel_matrix():
 # Regime-adaptation smoke test (decremental)
 # ---------------------------------------------------------------------------
 
+
 def test_decremental_adapts_to_new_regime():
     """After enough decremental updates with regime-B data, the model
     should predict regime-B samples better than regime-A samples."""
-    n_window  = N_TRAIN
+    n_window = N_TRAIN
     n_features = N_FEATURES
 
     Xa = RNG.uniform(-1, 1, (n_window, n_features))

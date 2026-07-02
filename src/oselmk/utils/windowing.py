@@ -81,15 +81,12 @@ def make_lag_features(
     series = np.asarray(series, dtype=float)
 
     if series.ndim != 1:
-        raise ValueError(
-            f"'series' must be a 1-D array, got shape {series.shape}."
-        )
+        raise ValueError(f"'series' must be a 1-D array, got shape {series.shape}.")
     if n_lags < 1:
         raise ValueError(f"'n_lags' must be >= 1, got {n_lags}.")
     if len(series) <= n_lags:
         raise ValueError(
-            f"'series' must have at least n_lags + 1 = {n_lags + 1} elements, "
-            f"got {len(series)}."
+            f"'series' must have at least n_lags + 1 = {n_lags + 1} elements, got {len(series)}."
         )
 
     n_samples = len(series) - n_lags

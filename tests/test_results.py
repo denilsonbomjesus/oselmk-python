@@ -19,7 +19,7 @@ from oselmk.utils.results import save_run
 RNG = np.random.default_rng(0)
 
 N = 20
-Y_TRUE = RNG.uniform(1.0, 5.0, N)   # no zeros -> MAPE defined
+Y_TRUE = RNG.uniform(1.0, 5.0, N)  # no zeros -> MAPE defined
 Y_PRED = Y_TRUE + RNG.normal(0, 0.1, N)
 
 TRAIN_TIME = 0.042
@@ -246,14 +246,18 @@ def test_two_runs_same_second_get_distinct_dirs(tmp_path: Path):
     base = tmp_path / "results"
     # First call creates the base timestamp dir
     dir1 = save_run(
-        y_true=Y_TRUE, y_pred=Y_PRED,
-        train_time_s=0.0, predict_time_s=0.0,
+        y_true=Y_TRUE,
+        y_pred=Y_PRED,
+        train_time_s=0.0,
+        predict_time_s=0.0,
         base_dir=base,
     )
     # Second call within the same second hits the existing dir and appends _1
     dir2 = save_run(
-        y_true=Y_TRUE, y_pred=Y_PRED,
-        train_time_s=0.0, predict_time_s=0.0,
+        y_true=Y_TRUE,
+        y_pred=Y_PRED,
+        train_time_s=0.0,
+        predict_time_s=0.0,
         base_dir=base,
     )
     assert dir1 != dir2

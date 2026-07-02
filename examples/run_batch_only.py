@@ -61,28 +61,31 @@ from oselmk.utils.windowing import make_lag_features
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Batch-only ELMK baseline (no online update)."
+    p = argparse.ArgumentParser(description="Batch-only ELMK baseline (no online update).")
+    p.add_argument("--dataset", default=None, help="Path to a single-column CSV / text file.")
+    p.add_argument("--kernel", default="rbf", choices=["rbf", "linear", "poly", "wavelet"])
+    p.add_argument(
+        "--C", type=float, default=100.0, help="Regularisation constant (default: 100.0)."
     )
-    p.add_argument("--dataset", default=None,
-                   help="Path to a single-column CSV / text file.")
-    p.add_argument("--kernel", default="rbf",
-                   choices=["rbf", "linear", "poly", "wavelet"])
-    p.add_argument("--C", type=float, default=100.0,
-                   help="Regularisation constant (default: 100.0).")
-    p.add_argument("--n-lags", type=int, default=4,
-                   dest="n_lags",
-                   help="Number of lag features (default: 4).")
-    p.add_argument("--test-ratio", type=float, default=0.2,
-                   dest="test_ratio",
-                   help="Fraction of windowed samples for testing (default: 0.2).")
+    p.add_argument(
+        "--n-lags", type=int, default=4, dest="n_lags", help="Number of lag features (default: 4)."
+    )
+    p.add_argument(
+        "--test-ratio",
+        type=float,
+        default=0.2,
+        dest="test_ratio",
+        help="Fraction of windowed samples for testing (default: 0.2).",
+    )
     return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
 # Dataset helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_series(path: str | None) -> np.ndarray:
     """Return a 1-D float array from *path*, or a synthetic signal."""
@@ -117,9 +120,9 @@ def _mackey_glass_synthetic(
     for _ in range(n):
         x_now = x[-1]
         x_tau = x[-tau - 1] if len(x) > tau else n0
-        dx = a * x_tau / (1.0 + x_tau ** 10) - b * x_now
+        dx = a * x_tau / (1.0 + x_tau**10) - b * x_now
         x.append(x_now + dt * dx)
-    series = np.array(x[tau + 1:], dtype=float)   # discard warm-up
+    series = np.array(x[tau + 1 :], dtype=float)  # discard warm-up
     print(f"[info] Generated synthetic Mackey-Glass signal ({len(series)} samples)")
     return series
 
@@ -127,6 +130,7 @@ def _mackey_glass_synthetic(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     args = _parse_args()
@@ -140,9 +144,9 @@ def main() -> None:
     #        so we first window then split.
     X_raw, y_raw = make_lag_features(series, n_lags=args.n_lags)
 
-    n_total  = len(y_raw)
-    n_test   = max(1, int(n_total * args.test_ratio))
-    n_train  = n_total - n_test
+    n_total = len(y_raw)
+    n_test = max(1, int(n_total * args.test_ratio))
+    n_train = n_total - n_test
 
     if n_train < 2:
         sys.exit("[error] Not enough data for the chosen n_lags / test_ratio.")
@@ -153,12 +157,12 @@ def main() -> None:
     # Normalise features (fit on train only)
     scaler_X = ZScoreNormalizer()
     X_train = scaler_X.fit_transform(X_train_raw)
-    X_test  = scaler_X.transform(X_test_raw)
+    X_test = scaler_X.transform(X_test_raw)
 
     # Normalise target (fit on train only)
     scaler_y = ZScoreNormalizer()
     y_train = scaler_y.fit_transform(y_train_raw)
-    y_test  = scaler_y.transform(y_test_raw)
+    y_test = scaler_y.transform(y_test_raw)
 
     print(f"[info] Train samples : {n_train}")
     print(f"[info] Test  samples : {n_test}")
@@ -172,8 +176,7 @@ def main() -> None:
     model.fit(X_train, y_train)
     train_time = time.perf_counter() - t0
 
-    print(f"[info] Training time : {train_time:.4f} s  "
-          f"(support size = {model.n_train_})")
+    print(f"[info] Training time : {train_time:.4f} s  (support size = {model.n_train_})")
 
     # --- 4. Predict on test set and denormalise ------------------------------
     t1 = time.perf_counter()
@@ -192,9 +195,7 @@ def main() -> None:
     print(f"  Predict time : {predict_time:.4f} s")
 
     # --- 6. Save results ----------------------------------------------------
-    dataset_name = (
-        Path(args.dataset).stem if args.dataset else "mackeyglass_synthetic"
-    )
+    dataset_name = Path(args.dataset).stem if args.dataset else "mackeyglass_synthetic"
     run_dir = save_run(
         y_true=y_true,
         y_pred=y_pred,

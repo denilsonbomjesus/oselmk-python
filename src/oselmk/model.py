@@ -283,8 +283,7 @@ class OSELMK:
 
         if mode not in ("sequential", "decremental"):
             raise NotImplementedError(
-                f"mode='{mode}' is not recognised. "
-                "Choose 'sequential' or 'decremental'."
+                f"mode='{mode}' is not recognised. Choose 'sequential' or 'decremental'."
             )
 
         X_new, y_new = self._validate_Xy(X_new, y_new)
@@ -308,20 +307,16 @@ class OSELMK:
 
         # --- Shared incremental expansion (sequential + decremental) ---
 
-        R_inv  = self.R_inv_       # (n, n)
-        theta  = self.theta_       # (n, n_out)
-        X_old  = self.X_train_     # (n, d)
-        K_old  = self.K_elm_       # (n, n)
-        w      = self._get_output_weight()   # (n, n_out) -- cached
+        R_inv = self.R_inv_  # (n, n)
+        theta = self.theta_  # (n, n_out)
+        X_old = self.X_train_  # (n, d)
+        K_old = self.K_elm_  # (n, n)
+        w = self._get_output_weight()  # (n, n_out) -- cached
 
         # K_cross[i,j] = k(x_old_i, x_new_j)      shape (n, bs)
-        K_cross = kernel_matrix(
-            X_old, X_new, kernel=self.kernel, params=self.kernel_params
-        )
+        K_cross = kernel_matrix(X_old, X_new, kernel=self.kernel, params=self.kernel_params)
         # K_new[i,j]   = k(x_new_i, x_new_j)      shape (bs, bs)
-        K_new = kernel_matrix(
-            X_new, X_new, kernel=self.kernel, params=self.kernel_params
-        )
+        K_new = kernel_matrix(X_new, X_new, kernel=self.kernel, params=self.kernel_params)
 
         # Eq. 17 -- sensitivity matrix             shape (n, bs)
         G = -(R_inv @ K_cross)
@@ -333,37 +328,38 @@ class OSELMK:
         gamma_inv = linalg.solve(gamma, np.eye(bs), assume_a="pos")
 
         # Eq. 27 -- new-block Lagrange multipliers  shape (bs, n_out)
-        E_bs      = y_new - K_cross.T @ w
+        E_bs = y_new - K_cross.T @ w
         theta_new = gamma_inv @ E_bs
 
         # Eq. 20 -- stacked multipliers             shape (n+bs, n_out)
         delta_theta = G @ theta_new
-        theta_star  = np.vstack([theta + delta_theta, theta_new])
+        theta_star = np.vstack([theta + delta_theta, theta_new])
 
         # Block-matrix inverse update               shape (n+bs, n+bs)
-        R11      = R_inv + G @ gamma_inv @ G.T          # (n,  n)
-        R12      = -(G @ gamma_inv)                     # (n,  bs)
-        R_inv_expanded = np.block([[R11,    R12      ],
-                                   [R12.T,  gamma_inv]])
+        R11 = R_inv + G @ gamma_inv @ G.T  # (n,  n)
+        R12 = -(G @ gamma_inv)  # (n,  bs)
+        R_inv_expanded = np.block([[R11, R12], [R12.T, gamma_inv]])
 
         # Expanded kernel matrix                    shape (n+bs, n+bs)
-        K_expanded = np.block([
-            [K_old,       K_cross       ],
-            [K_cross.T,   K_new         ],
-        ])
+        K_expanded = np.block(
+            [
+                [K_old, K_cross],
+                [K_cross.T, K_new],
+            ]
+        )
 
-        X_expanded = np.vstack([X_old,        X_new])
+        X_expanded = np.vstack([X_old, X_new])
         y_expanded = np.vstack([self.y_train_, y_new])
 
         # --- Mode-specific finalisation --------------------------------
 
         if mode == "sequential":
-            self.R_inv_    = R_inv_expanded
-            self.theta_    = theta_star
-            self.K_elm_    = K_expanded
-            self.X_train_  = X_expanded
-            self.y_train_  = y_expanded
-            self.n_train_  = self.n_train_ + bs
+            self.R_inv_ = R_inv_expanded
+            self.theta_ = theta_star
+            self.K_elm_ = K_expanded
+            self.X_train_ = X_expanded
+            self.y_train_ = y_expanded
+            self.n_train_ = self.n_train_ + bs
 
         else:  # mode == "decremental"
             # Prune the oldest `bs` support vectors (sliding window).
@@ -371,11 +367,11 @@ class OSELMK:
             #   model.theta = theta_ast((bs+1):end)
             #   model.K_elm = K_elm_expanded((bs+1):end, (bs+1):end)
             #   model.R_inv = R_inv_expanded((bs+1):end, (bs+1):end)
-            self.R_inv_    = R_inv_expanded[bs:, bs:]
-            self.theta_    = theta_star[bs:]
-            self.K_elm_    = K_expanded[bs:, bs:]
-            self.X_train_  = X_expanded[bs:]
-            self.y_train_  = y_expanded[bs:]
+            self.R_inv_ = R_inv_expanded[bs:, bs:]
+            self.theta_ = theta_star[bs:]
+            self.K_elm_ = K_expanded[bs:, bs:]
+            self.X_train_ = X_expanded[bs:]
+            self.y_train_ = y_expanded[bs:]
             # n_train_ stays fixed (window_size)
             # self.n_train_ is unchanged
 
@@ -410,9 +406,7 @@ class OSELMK:
         if X.ndim != 2:
             raise ValueError(f"X must be a 2-D array, got shape {X.shape}.")
 
-        K_test = kernel_matrix(
-            X, self.X_train_, kernel=self.kernel, params=self.kernel_params
-        )
+        K_test = kernel_matrix(X, self.X_train_, kernel=self.kernel, params=self.kernel_params)
         return (K_test @ self._get_output_weight()).squeeze()
 
     # ------------------------------------------------------------------
@@ -440,8 +434,7 @@ class OSELMK:
         y = np.asarray(y, dtype=float)
         if X.ndim != 2:
             raise ValueError(
-                f"X must be a 2-D array of shape (n_samples, n_features), "
-                f"got shape {X.shape}."
+                f"X must be a 2-D array of shape (n_samples, n_features), got shape {X.shape}."
             )
         if y.ndim == 1:
             y = y.reshape(-1, 1)

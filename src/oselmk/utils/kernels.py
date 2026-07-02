@@ -54,8 +54,8 @@ def _pairwise_sq_dist(
     D : ndarray, shape (m, n)
         D[i, j] = ||A[i] - B[j]||^2
     """
-    sq_a = np.sum(A ** 2, axis=1, keepdims=True)  # (m, 1)
-    sq_b = np.sum(B ** 2, axis=1, keepdims=True)  # (n, 1)
+    sq_a = np.sum(A**2, axis=1, keepdims=True)  # (m, 1)
+    sq_b = np.sum(B**2, axis=1, keepdims=True)  # (n, 1)
     dist_sq = sq_a + sq_b.T - 2.0 * (A @ B.T)
     return np.maximum(dist_sq, 0.0)
 
@@ -188,9 +188,7 @@ def kernel_matrix(
         else:
             p = list(params) if hasattr(params, "__iter__") else [params]
             if len(p) < 2:
-                raise ValueError(
-                    "Polynomial kernel requires two parameters: params=[c, d]."
-                )
+                raise ValueError("Polynomial kernel requires two parameters: params=[c, d].")
             c, d = float(p[0]), float(p[1])
         return poly_kernel(A, B, c=c, d=d)
 
@@ -200,13 +198,10 @@ def kernel_matrix(
         else:
             p = list(params) if hasattr(params, "__iter__") else [params]
             if len(p) < 3:
-                raise ValueError(
-                    "Wavelet kernel requires three parameters: params=[b, a, w0]."
-                )
+                raise ValueError("Wavelet kernel requires three parameters: params=[b, a, w0].")
             b, a, omega0 = float(p[0]), float(p[1]), float(p[2])
         return wavelet_kernel(A, B, b=b, a=a, omega0=omega0)
 
     raise ValueError(
-        f"Unknown kernel '{kernel}'. "
-        f"Choose from: {', '.join(repr(k) for k in SUPPORTED_KERNELS)}."
+        f"Unknown kernel '{kernel}'. Choose from: {', '.join(repr(k) for k in SUPPORTED_KERNELS)}."
     )
