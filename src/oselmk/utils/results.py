@@ -70,8 +70,6 @@ Usage example
     print(f"Results saved to {run_dir}")
 """
 
-from __future__ import annotations
-
 import csv
 import json
 import math

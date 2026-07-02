@@ -1,8 +1,8 @@
 """Unit tests for src/oselmk/model.py."""
 
 import numpy as np
-import pytest
 from numpy.testing import assert_allclose
+import pytest
 
 from oselmk.model import OSELMK
 from oselmk.utils.kernels import kernel_matrix
@@ -164,10 +164,9 @@ def test_output_weight_cached_same_object_on_repeated_predict():
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     model.predict(X_TEST)
     assert model.output_weight_ is model.predict(X_TEST) or (
-        model.predict(X_TEST)  # trigger; then check object identity
-        or True  # covered by next test
+        model.predict(X_TEST)
+        or True
     )
-    # direct identity check
     w1 = model.output_weight_
     model.predict(X_TEST)
     assert model.output_weight_ is w1
@@ -241,7 +240,7 @@ def test_update_sequential_expands_X_train():
 def test_update_sequential_invalidates_cache():
     """update() must set _weights_dirty=True and clear output_weight_."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
-    model.predict(X_TEST)  # populate cache
+    model.predict(X_TEST)
     assert model.output_weight_ is not None
     model.update(X_NEW, Y_NEW)
     assert model._weights_dirty is True
@@ -400,21 +399,17 @@ def test_decremental_adapts_to_new_regime():
     n_window  = N_TRAIN
     n_features = N_FEATURES
 
-    # regime A: y = 2*x0 + 3*x1
     Xa = RNG.uniform(-1, 1, (n_window, n_features))
     ya = 2.0 * Xa[:, 0] + 3.0 * Xa[:, 1]
 
     model = OSELMK(kernel="linear", C=1e4).fit(Xa, ya)
 
-    # regime B: y = -5*x0 + x2
-    # feed enough blocks to evict all regime-A rows from the window
     n_updates = int(np.ceil(n_window / BS)) + 2
     for _ in range(n_updates):
         Xb_block = RNG.uniform(0, 1, (BS, n_features))
         yb_block = -10.0 * Xb_block[:, 0]
         model.update(Xb_block, yb_block, mode="decremental")
 
-    # evaluate on fresh samples from each regime
     Xa_test = RNG.uniform(-1, 1, (20, n_features))
     ya_test = 2.0 * Xa_test[:, 0] + 3.0 * Xa_test[:, 1]
 
