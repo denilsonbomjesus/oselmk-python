@@ -55,9 +55,18 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-# Treat numpy sub-packages (numpy.typing, numpy.testing, etc.) as part of
-# the same third-party section as numpy itself, preventing spurious I001.
-known-third-party = ["numpy", "scipy", "pytest"]
+# Treat numpy sub-packages and pytest as third-party so they are grouped
+# together and never trigger spurious I001 cross-section errors.
+known-third-party = [
+    "numpy",
+    "numpy.testing",
+    "numpy.typing",
+    "scipy",
+    "pytest",
+]
+# Keep stdlib/third-party/first-party sections but sort all imports within
+# each section without requiring blank-line sub-group separators.
+force-sort-within-sections = true
 
 [tool.ruff.lint.per-file-ignores]
 # tests: assert statements are fine

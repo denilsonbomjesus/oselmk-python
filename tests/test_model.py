@@ -1,8 +1,8 @@
 """Unit tests for src/oselmk/model.py."""
 
 import numpy as np
-from numpy.testing import assert_allclose
 import pytest
+from numpy.testing import assert_allclose
 
 from oselmk.model import OSELMK
 from oselmk.utils.kernels import kernel_matrix
