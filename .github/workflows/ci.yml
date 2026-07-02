@@ -4,12 +4,10 @@
 #
 # Jobs
 # ----
-# lint   : ruff check + ruff format --check (Python 3.12 only — version-
-#          independent for target-version = py310 set in pyproject.toml)
+# lint   : ruff check + ruff format --check (Python 3.12 only)
 # test   : pytest --cov=src/oselmk across Python 3.10, 3.11, 3.12
 #
-# The test matrix only starts if lint passes, avoiding wasted runner
-# minutes on commits with obvious style / import errors.
+# The test matrix only starts if lint passes.
 
 name: CI
 
@@ -19,8 +17,6 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel any in-progress run for the same branch so fast-forward pushes
-# don't queue up stale jobs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -45,21 +41,18 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Upgrade pip / setuptools / wheel
+        # Ensures setuptools.backends.legacy (requires setuptools >= 69)
+        # is available before the editable install attempt.
+        run: pip install --upgrade pip setuptools wheel
+
       - name: Install package with dev extras
-        # Installs ruff (declared in [project.optional-dependencies] dev)
-        # plus the runtime deps (numpy, scipy) so ruff can resolve imports.
         run: pip install -e ".[dev]"
 
       - name: ruff check
-        # Uses [tool.ruff] / [tool.ruff.lint] config from pyproject.toml.
-        # select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-        # ignore  = ["E501"]  (line-length enforced by ruff format, not check)
         run: ruff check .
 
       - name: ruff format --check
-        # Does NOT rewrite files — exits with code 1 if any file would change.
-        # Keeps formatting concerns separate from lint concerns so error
-        # messages point to the right issue.
         run: ruff format --check .
 
   # --------------------------------------------------------------------------
@@ -68,11 +61,10 @@ jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: lint          # only run if lint passes
+    needs: lint
 
     strategy:
-      fail-fast: false   # let all three versions finish even if one fails,
-                         # so you see the full compatibility picture at once
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
@@ -87,27 +79,20 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Upgrade pip / setuptools / wheel
+        # Same fix applied to every matrix node.
+        run: pip install --upgrade pip setuptools wheel
+
       - name: Install package with dev extras
-        # Editable install so pytest resolves src/oselmk without PYTHONPATH
-        # tricks.  The -e flag also means changes to __init__.py are live
-        # without reinstalling.
         run: pip install -e ".[dev]"
 
       - name: Run pytest
-        # pytest args come from [tool.pytest.ini_options] in pyproject.toml:
-        #   testpaths  = ["tests"]
-        #   addopts    = "--cov=src/oselmk --cov-report=term-missing -v"
-        # Generates .coverage (SQLite) and an HTML report in htmlcov/.
         run: pytest --cov-report=html
 
       - name: Upload coverage report
-        # Makes the per-version HTML coverage report downloadable from the
-        # GitHub Actions summary page without needing an external service.
         uses: actions/upload-artifact@v4
         with:
           name: coverage-py${{ matrix.python-version }}
           path: htmlcov/
           retention-days: 14
-          # Don't fail the job if htmlcov/ wasn't generated (e.g. no tests
-          # exist yet — graceful degradation).
           if-no-files-found: warn
