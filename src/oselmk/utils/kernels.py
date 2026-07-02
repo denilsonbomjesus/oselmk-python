@@ -29,6 +29,14 @@ from numpy.typing import NDArray
 
 
 # ---------------------------------------------------------------------------
+# Public constants
+# ---------------------------------------------------------------------------
+
+#: All kernel names accepted by :func:`kernel_matrix`.
+SUPPORTED_KERNELS: tuple[str, ...] = ("rbf", "linear", "poly", "wavelet")
+
+
+# ---------------------------------------------------------------------------
 # Distance helper
 # ---------------------------------------------------------------------------
 
@@ -165,6 +173,11 @@ def kernel_matrix(
     A = np.asarray(A, dtype=float)
     B = np.asarray(B, dtype=float)
 
+    if A.ndim == 1:
+        A = A.reshape(-1, 1)
+    if B.ndim == 1:
+        B = B.reshape(-1, 1)
+
     kernel = kernel.lower().strip()
 
     if kernel == "rbf":
@@ -179,8 +192,11 @@ def kernel_matrix(
             c, d = 1.0, 2.0
         else:
             p = list(params) if hasattr(params, "__iter__") else [params]
-            c = float(p[0]) if len(p) > 0 else 1.0
-            d = float(p[1]) if len(p) > 1 else 2.0
+            if len(p) < 2:
+                raise ValueError(
+                    "Polynomial kernel requires two parameters: params=[c, d]."
+                )
+            c, d = float(p[0]), float(p[1])
         return poly_kernel(A, B, c=c, d=d)
 
     if kernel == "wavelet":
@@ -188,12 +204,14 @@ def kernel_matrix(
             b, a, omega0 = 1.0, 1.0, 1.0
         else:
             p = list(params) if hasattr(params, "__iter__") else [params]
-            b = float(p[0]) if len(p) > 0 else 1.0
-            a = float(p[1]) if len(p) > 1 else 1.0
-            omega0 = float(p[2]) if len(p) > 2 else 1.0
+            if len(p) < 3:
+                raise ValueError(
+                    "Wavelet kernel requires three parameters: params=[b, a, w0]."
+                )
+            b, a, omega0 = float(p[0]), float(p[1]), float(p[2])
         return wavelet_kernel(A, B, b=b, a=a, omega0=omega0)
 
     raise ValueError(
         f"Unknown kernel '{kernel}'. "
-        "Choose from: 'rbf', 'linear', 'poly', 'wavelet'."
+        f"Choose from: {', '.join(repr(k) for k in SUPPORTED_KERNELS)}."
     )
