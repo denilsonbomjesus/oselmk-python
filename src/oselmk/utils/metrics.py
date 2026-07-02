@@ -15,57 +15,51 @@ Metrics
 
 ``nrmse``
     Normalised RMSE: ``rmse / (max(y_true) - min(y_true))``.
-    Returns ``nan`` for constant series (zero range) to avoid division by
-    zero—matching the behaviour of the Octave ``calc_errors.m`` guard.
+    Returns ``nan`` when the series is constant (zero range).
 
 ``mape``
-    Mean Absolute Percentage Error.  Excludes samples where
-    ``|y_true| < eps`` (following the Octave ``if all(target != 0)`` guard)
-    and returns ``nan`` when *all* true values are near zero.
+    Mean Absolute Percentage Error.
+    Near-zero true values (|y| < 1e-8) are excluded to avoid division by
+    zero, matching the guard in the original ``calc_errors.m``.
+    Returns ``nan`` when *all* true values are near zero.
 
 ``smape``
-    Symmetric MAPE: ``mean(|y_true - y_pred| / ((|y_true|+|y_pred|)/2))``.
-    Bounded in ``[0, 2]``; degenerate ``0/0`` samples contribute 0.
+    Symmetric MAPE: bounded in ``[0, 2]``.
+    Uses ``(|y_true| + |y_pred|) / 2`` as denominator; pairs where the
+    denominator is zero contribute 0 to the mean.
 
 ``compute_all``
-    Convenience wrapper returning all four metrics as a ``dict``.
-
-Notes
------
-All public functions validate their inputs and raise :exc:`ValueError`
-for mismatched lengths or empty arrays.
+    Aggregator: returns a ``dict`` with all four metrics.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
 
 
 # ---------------------------------------------------------------------------
-# Validation helper
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _validate(
-    y_true: NDArray[np.floating],
-    y_pred: NDArray[np.floating],
-) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Cast inputs to float arrays, flatten, and validate shapes."""
+def _validate(y_true: NDArray, y_pred: NDArray) -> tuple[NDArray, NDArray]:
+    """Coerce inputs and enforce shape compatibility."""
     y_true = np.asarray(y_true, dtype=float).ravel()
     y_pred = np.asarray(y_pred, dtype=float).ravel()
+    if y_true.size == 0:
+        raise ValueError("y_true and y_pred must not be empty.")
     if y_true.shape != y_pred.shape:
         raise ValueError(
-            f"y_true and y_pred must have the same length. "
-            f"Got {len(y_true)} vs {len(y_pred)}."
+            f"Shape mismatch: y_true has {y_true.shape}, y_pred has {y_pred.shape}."
         )
-    if len(y_true) == 0:
-        raise ValueError("y_true and y_pred must not be empty.")
     return y_true, y_pred
 
 
 # ---------------------------------------------------------------------------
-# Individual metrics
+# Public metrics
 # ---------------------------------------------------------------------------
 
 
@@ -77,13 +71,12 @@ def rmse(
 
     Parameters
     ----------
-    y_true : array-like, shape (n,)
-    y_pred : array-like, shape (n,)
+    y_true, y_pred : array-like, shape (n,)
 
     Returns
     -------
     float
-        RMSE >= 0.
+        Always >= 0.  Equal to 0 only for perfect predictions.
     """
     y_true, y_pred = _validate(y_true, y_pred)
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
@@ -95,51 +88,46 @@ def nrmse(
 ) -> float:
     """Normalised RMSE (range-normalised).
 
-    Computed as ``rmse / (max(y_true) - min(y_true))``.
-    Returns ``nan`` when all true values are identical (zero range).
-
-    Parameters
-    ----------
-    y_true : array-like, shape (n,)
-    y_pred : array-like, shape (n,)
-
     Returns
     -------
     float
-        NRMSE >= 0, or ``nan`` for a constant series.
+        ``rmse / (max(y_true) - min(y_true))``.
+        Returns ``nan`` for constant series.
     """
     y_true, y_pred = _validate(y_true, y_pred)
-    r = float(np.max(y_true) - np.min(y_true))
+    r = float(y_true.max() - y_true.min())
     if r == 0.0:
+        warnings.warn(
+            "nrmse: y_true is constant (range=0); returning nan.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return float("nan")
-    return float(np.sqrt(np.mean((y_true - y_pred) ** 2)) / r)
+    return rmse(y_true, y_pred) / r
 
 
 def mape(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
-    eps: float = 1e-10,
+    eps: float = 1e-8,
 ) -> float:
     """Mean Absolute Percentage Error.
 
-    Samples where ``|y_true| < eps`` are excluded.  Returns ``nan`` when
-    *all* true values are near zero.
-
-    Parameters
-    ----------
-    y_true : array-like, shape (n,)
-    y_pred : array-like, shape (n,)
-    eps : float, default 1e-10
-        Threshold below which a true value is considered zero.
+    Near-zero true values (|y_true| < eps) are excluded.
 
     Returns
     -------
     float
-        MAPE >= 0 (as a fraction, not a percentage), or ``nan``.
+        Value in [0, inf).  Returns ``nan`` if all true values are near zero.
     """
     y_true, y_pred = _validate(y_true, y_pred)
     mask = np.abs(y_true) >= eps
     if not np.any(mask):
+        warnings.warn(
+            "mape: all y_true values are near zero; returning nan.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return float("nan")
     return float(np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])))
 
@@ -148,45 +136,29 @@ def smape(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
 ) -> float:
-    """Symmetric Mean Absolute Percentage Error.
+    """Symmetric Mean Absolute Percentage Error, bounded in [0, 2].
 
-    Computed as ``mean(|y_true - y_pred| / ((|y_true| + |y_pred|) / 2))``.
-    Degenerate samples where both values are zero contribute 0.
-    The result is bounded in ``[0, 2]``.
-
-    Parameters
-    ----------
-    y_true : array-like, shape (n,)
-    y_pred : array-like, shape (n,)
+    Denominator is ``(|y_true| + |y_pred|) / 2``.
+    Pairs where the denominator is zero contribute 0.
 
     Returns
     -------
     float
-        sMAPE in [0, 2].
+        Value in [0, 2].
     """
     y_true, y_pred = _validate(y_true, y_pred)
     denom = (np.abs(y_true) + np.abs(y_pred)) / 2.0
-    num = np.abs(y_true - y_pred)
-    # avoid 0/0: when both values are zero the error is 0
-    ratio = np.where(denom == 0.0, 0.0, num / denom)
+    numer = np.abs(y_true - y_pred)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.where(denom == 0.0, 0.0, numer / denom)
     return float(np.mean(ratio))
-
-
-# ---------------------------------------------------------------------------
-# Convenience aggregator
-# ---------------------------------------------------------------------------
 
 
 def compute_all(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
 ) -> dict[str, float]:
-    """Compute all four metrics and return them as a dictionary.
-
-    Parameters
-    ----------
-    y_true : array-like, shape (n,)
-    y_pred : array-like, shape (n,)
+    """Compute all four metrics in one call.
 
     Returns
     -------
