@@ -33,6 +33,7 @@ Metrics
 """
 
 import warnings
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -155,7 +156,7 @@ def smape(
 def compute_all(
     y_true: NDArray[np.floating],
     y_pred: NDArray[np.floating],
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Compute all four metrics in one call.
 
     Returns

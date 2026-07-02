@@ -55,8 +55,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-# Treat numpy sub-packages and pytest as third-party so they are grouped
-# together and never trigger spurious I001 cross-section errors.
+# Declare all numpy sub-packages and pytest as third-party so ruff never
+# splits them into a separate section and never fires I001 on them.
 known-third-party = [
     "numpy",
     "numpy.testing",
@@ -64,9 +64,10 @@ known-third-party = [
     "scipy",
     "pytest",
 ]
-# Keep stdlib/third-party/first-party sections but sort all imports within
-# each section without requiring blank-line sub-group separators.
-force-sort-within-sections = true
+# Standard isort behaviour: one blank line between stdlib / third-party /
+# first-party sections; within each section, bare `import` statements come
+# before `from … import` statements (lines-between-types = 0 is the ruff
+# default and is what we want — no extra blank line between the two sub-groups).
 
 [tool.ruff.lint.per-file-ignores]
 # tests: assert statements are fine
