@@ -22,8 +22,6 @@ a single vectorised expression::
 This avoids explicit loops and is memory-efficient for large matrices.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from numpy.typing import NDArray
 

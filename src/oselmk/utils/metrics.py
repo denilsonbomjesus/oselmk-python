@@ -32,8 +32,6 @@ Metrics
     Aggregator: returns a ``dict`` with all four metrics.
 """
 
-from __future__ import annotations
-
 import warnings
 
 import numpy as np
