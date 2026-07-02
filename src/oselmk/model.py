@@ -367,11 +367,15 @@ class OSELMK:
             #   model.theta = theta_ast((bs+1):end)
             #   model.K_elm = K_elm_expanded((bs+1):end, (bs+1):end)
             #   model.R_inv = R_inv_expanded((bs+1):end, (bs+1):end)
-            self.R_inv_ = R_inv_expanded[bs:, bs:]
-            self.theta_ = theta_star[bs:]
+            E = R_inv_expanded[:bs, :bs]
+            F = R_inv_expanded[:bs, bs:]
+            H = R_inv_expanded[bs:, bs:]
+
+            self.R_inv_ = H - F.T @ linalg.solve(E, F, assume_a="pos")
             self.K_elm_ = K_expanded[bs:, bs:]
             self.X_train_ = X_expanded[bs:]
             self.y_train_ = y_expanded[bs:]
+            self.theta_ = self.R_inv_ @ self.y_train_
             # n_train_ stays fixed (window_size)
             # self.n_train_ is unchanged
 
