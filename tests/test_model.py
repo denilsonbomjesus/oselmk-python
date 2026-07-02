@@ -261,7 +261,7 @@ def test_update_unknown_mode_raises():
     """update() with an unknown mode must raise NotImplementedError."""
     model = OSELMK().fit(X_TRAIN, Y_TRAIN)
     with pytest.raises(NotImplementedError):
-        model.update(X_NEW, Y_NEW, mode="decremental")
+        model.update(X_NEW, Y_NEW, mode="invalid_mode")
 
 def test_update_sequential_R_inv_is_symmetric():
     """R_inv_ must remain symmetric after a sequential update."""
@@ -286,13 +286,7 @@ def test_update_sequential_multiple_blocks():
     assert model.n_train_ == N_TRAIN + 2 * BS
 
 def test_update_sequential_improves_fit_on_synthetic_series():
-    """Sequential update should not worsen training RMSE on the extended set.
-
-    We train on X_TRAIN and then update with X_NEW (both drawn from the
-    same linear function).  The updated model is evaluated on the combined
-    training set; its RMSE must be no worse than a model trained only on
-    X_TRAIN evaluated on that same combined set.
-    """
+    """Sequential update should not worsen training RMSE on the extended set."""
     X_combined = np.vstack([X_TRAIN, X_NEW])
     Y_combined = 2.0 * X_combined[:, 0] + 3.0 * X_combined[:, 1]
 
@@ -307,7 +301,126 @@ def test_update_sequential_improves_fit_on_synthetic_series():
         (model_updated.predict(X_combined) - Y_combined) ** 2
     )))
 
-    # Updated model must be at least as good (allow tiny numerical slack)
     assert rmse_after <= rmse_before + 1e-6, (
         f"RMSE degraded after update: {rmse_before:.6f} -> {rmse_after:.6f}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# update() -- decremental mode
+# ---------------------------------------------------------------------------
+
+def test_update_decremental_n_train_unchanged():
+    """n_train_ must stay at N_TRAIN after a decremental update."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model.n_train_ == N_TRAIN
+
+def test_update_decremental_R_inv_shape_unchanged():
+    """R_inv_ must keep shape (N_TRAIN, N_TRAIN) after decremental update."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model.R_inv_.shape == (N_TRAIN, N_TRAIN)
+
+def test_update_decremental_theta_shape_unchanged():
+    """theta_ must keep shape (N_TRAIN, 1) after decremental update."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model.theta_.shape == (N_TRAIN, 1)
+
+def test_update_decremental_K_elm_shape_unchanged():
+    """K_elm_ must keep shape (N_TRAIN, N_TRAIN) after decremental update."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model.K_elm_.shape == (N_TRAIN, N_TRAIN)
+
+def test_update_decremental_X_train_shape_unchanged():
+    """X_train_ must keep shape (N_TRAIN, N_FEATURES) after decremental update."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model.X_train_.shape == (N_TRAIN, N_FEATURES)
+
+def test_update_decremental_oldest_rows_evicted():
+    """After one decremental update, the first BS rows of X_TRAIN must be gone."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    # The new X_train_ should contain X_TRAIN[BS:] followed by X_NEW
+    assert_allclose(model.X_train_[:N_TRAIN - BS], X_TRAIN[BS:])
+    assert_allclose(model.X_train_[N_TRAIN - BS:], X_NEW)
+
+def test_update_decremental_multiple_blocks_size_fixed():
+    """Ten decremental updates must keep n_train_ fixed at N_TRAIN."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    for _ in range(10):
+        X_block = RNG.uniform(-1.0, 1.0, (BS, N_FEATURES))
+        Y_block = 2.0 * X_block[:, 0] + 3.0 * X_block[:, 1]
+        model.update(X_block, Y_block, mode="decremental")
+    assert model.n_train_ == N_TRAIN
+
+def test_update_decremental_invalidates_cache():
+    """Decremental update must invalidate output_weight_ cache."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    model.predict(X_TEST)
+    model.update(X_NEW, Y_NEW, mode="decremental")
+    assert model._weights_dirty is True
+    assert model.output_weight_ is None
+
+def test_update_decremental_wrong_window_size_raises():
+    """Passing window_size != n_train_ must raise ValueError."""
+    model = OSELMK().fit(X_TRAIN, Y_TRAIN)
+    with pytest.raises(ValueError, match="window_size"):
+        model.update(X_NEW, Y_NEW, mode="decremental", window_size=N_TRAIN + 1)
+
+def test_update_decremental_bs_gt_window_raises():
+    """Block size larger than window_size must raise ValueError."""
+    rng = np.random.default_rng(0)
+    small_X = rng.uniform(-1, 1, (4, N_FEATURES))
+    small_y = small_X[:, 0]
+    model = OSELMK().fit(small_X, small_y)
+    X_big = rng.uniform(-1, 1, (5, N_FEATURES))
+    y_big = X_big[:, 0]
+    with pytest.raises(ValueError, match="bs"):
+        model.update(X_big, y_big, mode="decremental")
+
+def test_update_decremental_forgets_old_pattern():
+    """After enough decremental updates the model should adapt to the new regime.
+
+    Protocol
+    --------
+    1. Fit on REGIME_A: y = +10 * x0  (strong positive slope).
+    2. Stream BS-sized blocks of REGIME_B: y = -10 * x0 (strong negative slope)
+       until the entire window has been replaced by regime-B data.
+    3. Assert that RMSE on a regime-B test set is lower than RMSE on regime-A
+       test set (model has forgotten regime A).
+    """
+    rng = np.random.default_rng(7)
+    n_window = N_TRAIN          # window size = 30
+    n_features = 1
+
+    # Regime A -- initial training data
+    Xa = rng.uniform(0, 1, (n_window, n_features))
+    ya = 10.0 * Xa[:, 0]
+
+    model = OSELMK(kernel="linear", C=1e4).fit(Xa, ya)
+
+    # Stream enough regime-B blocks to flush the window completely
+    # (ceil(n_window / BS) updates are sufficient)
+    n_updates = int(np.ceil(n_window / BS)) + 2
+    for i in range(n_updates):
+        Xb_block = rng.uniform(0, 1, (BS, n_features))
+        yb_block = -10.0 * Xb_block[:, 0]
+        model.update(Xb_block, yb_block, mode="decremental")
+
+    # Evaluation sets (unseen)
+    Xa_test = rng.uniform(0, 1, (20, n_features))
+    ya_test = 10.0 * Xa_test[:, 0]
+    Xb_test = rng.uniform(0, 1, (20, n_features))
+    yb_test = -10.0 * Xb_test[:, 0]
+
+    rmse_a = float(np.sqrt(np.mean((model.predict(Xa_test) - ya_test) ** 2)))
+    rmse_b = float(np.sqrt(np.mean((model.predict(Xb_test) - yb_test) ** 2)))
+
+    assert rmse_b < rmse_a, (
+        f"Model should favour regime B after window replacement, "
+        f"but RMSE_B={rmse_b:.4f} >= RMSE_A={rmse_a:.4f}"
     )

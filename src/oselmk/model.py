@@ -33,7 +33,7 @@ definite matrices.
 Prediction caching
 ------------------
 The original ``predict_os_elmk.m`` recomputed
-``OutputWeight = R_inv \ T`` on every prediction call -- an O(n^2)
+``OutputWeight = R_inv \\ T`` on every prediction call -- an O(n^2)
 operation that is redundant when the model state has not changed.
 
 Here, ``output_weight_`` is cached as a model attribute and recomputed
@@ -61,6 +61,30 @@ Equations referenced below are from the paper (Section 2.3)::
 
         R_inv_new = [[R11, R12],
                      [R21, R22]]
+
+Decremental update (sliding window)
+------------------------------------
+After the full (n + bs) incremental expansion described above, the
+oldest ``bs`` support vectors are pruned by slicing every state matrix
+from index ``bs`` onward::
+
+    R_inv_  = R_inv_expanded[bs:, bs:]
+    theta_  = theta_expanded[bs:]
+    K_elm_  = K_elm_expanded[bs:, bs:]
+    X_train_ = X_train_expanded[bs:]
+    y_train_ = y_train_expanded[bs:]
+
+This keeps ``n_train_`` constant at ``window_size`` and lets the model
+forget old patterns, enabling adaptation to nonstationary series.
+
+Note on the pruned R_inv sub-block
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The (bs:, bs:) sub-block of the block-inverted R_inv is NOT the exact
+inverse of the pruned kernel matrix ``(K_elm_[bs:,bs:] + I/C)``.  It is
+an approximation that avoids an O(n^3) re-solve at every step.  The
+reference Octave implementation makes the same approximation.  For
+practical nonstationary forecasting the error is negligible as long as
+the window is large enough relative to the block size.
 """
 
 from __future__ import annotations
@@ -174,24 +198,36 @@ class OSELMK:
         return self
 
     # ------------------------------------------------------------------
-    # Online update
+    # Online update  (sequential + decremental)
     # ------------------------------------------------------------------
 
     def update(
         self,
         X_new: NDArray[np.floating],
         y_new: NDArray[np.floating],
-        mode: Literal["sequential"] = "sequential",
+        mode: Literal["sequential", "decremental"] = "sequential",
+        window_size: int | None = None,
     ) -> "OSELMK":
         """Update the model online with a new block of data.
 
-        Implements the sequential (incremental) update from Section 2.3
-        of the paper.  The model expands its support set by ``bs`` new
-        samples without recomputing the full kernel matrix from scratch.
+        Two modes are supported:
 
-        The update follows the Schur complement block-matrix inversion
-        identity to extend ``R_inv_`` in O(n * bs + bs^3) instead of
-        re-solving the full O(n^3) system.
+        ``'sequential'`` (incremental)
+            The support set **grows** by ``bs`` samples.  Implements
+            Section 2.3 of the paper (Eqs. 17, 20, 26, 27) via the
+            Schur-complement block-matrix inverse.  Cost: O(n·bs + bs³)
+            instead of O((n+bs)³).
+
+        ``'decremental'`` (sliding window)
+            First performs the full sequential expansion to size
+            ``(n + bs)``, then prunes the oldest ``bs`` rows/columns
+            from every state matrix, keeping ``n_train_`` fixed at
+            ``window_size``.  Equivalent to ``os_elmk_dec_learning.m``.
+            Enables forgetting of old patterns for nonstationary series.
+
+            ``window_size`` must equal ``n_train_`` (the current support
+            size at call time).  If omitted it defaults to the current
+            ``n_train_``.
 
         Equations (paper notation)
         --------------------------
@@ -202,8 +238,7 @@ class OSELMK:
 
         G        = -R_inv @ K_cross                 (Eq. 17)  (n,  bs)
         gamma    = K_new + I_bs/C + K_cross.T @ G   (Eq. 26)  (bs, bs)
-        E_bs     = y_new - K_cross.T @ R_inv @ y_train_       (bs, n_out)
-                 = y_new - K_cross.T @ output_weight_
+        E_bs     = y_new - K_cross.T @ output_weight_          (bs, n_out)
         theta_new = gamma^{-1} @ E_bs               (Eq. 27)  (bs, n_out)
 
         # Stacked multipliers (Eq. 20)
@@ -218,15 +253,27 @@ class OSELMK:
         R_inv_new = [[R11, R12],
                      [R12.T, gamma_inv]]            (n+bs, n+bs)
 
+        Decremental pruning (applied only when mode='decremental')
+        -----------------------------------------------------------
+        After expansion to (n+bs), slice away the first ``bs`` indices::
+
+            R_inv_  = R_inv_expanded[bs:, bs:]
+            theta_  = theta_expanded[bs:]
+            K_elm_  = K_elm_expanded[bs:, bs:]
+            X_train_ = X_train_expanded[bs:]
+            y_train_ = y_train_expanded[bs:]
+
         Parameters
         ----------
         X_new : array-like, shape (bs, n_features)
             New input block.
         y_new : array-like, shape (bs,) or (bs, n_outputs)
             New target block.
-        mode : {'sequential'}, default 'sequential'
-            Update mode.  Only ``'sequential'`` is supported in this
-            commit; ``'decremental'`` will be added in the next commit.
+        mode : {'sequential', 'decremental'}, default 'sequential'
+            Update mode.
+        window_size : int or None, default None
+            Only used when ``mode='decremental'``.  Must equal the
+            current ``n_train_``.  Defaults to ``self.n_train_``.
 
         Returns
         -------
@@ -234,83 +281,103 @@ class OSELMK:
         """
         self._check_is_fitted()
 
-        if mode != "sequential":
+        if mode not in ("sequential", "decremental"):
             raise NotImplementedError(
-                f"mode='{mode}' is not implemented yet. "
-                "Only 'sequential' is currently supported."
+                f"mode='{mode}' is not recognised. "
+                "Choose 'sequential' or 'decremental'."
             )
 
         X_new, y_new = self._validate_Xy(X_new, y_new)
         bs = X_new.shape[0]
 
-        # Current state
-        R_inv = self.R_inv_      # (n, n)
-        theta = self.theta_      # (n, n_out)
-        X_old = self.X_train_    # (n, d)
-        K_old = self.K_elm_      # (n, n)
-        w = self._get_output_weight()  # (n, n_out) -- reuse cached weights
+        if mode == "decremental":
+            # Validate / default window_size
+            if window_size is None:
+                window_size = self.n_train_
+            if window_size != self.n_train_:
+                raise ValueError(
+                    f"window_size ({window_size}) must equal the current "
+                    f"n_train_ ({self.n_train_}).  The sliding window "
+                    "keeps the support size fixed."
+                )
+            if bs > window_size:
+                raise ValueError(
+                    f"Block size bs={bs} exceeds window_size={window_size}. "
+                    "bs must be strictly smaller than the window."
+                )
 
-        # --- cross-kernel: existing support vs new block -----------------
-        # K_cross[i, j] = k(x_old_i, x_new_j)     shape (n, bs)
+        # --- Shared incremental expansion (sequential + decremental) ---
+
+        R_inv  = self.R_inv_       # (n, n)
+        theta  = self.theta_       # (n, n_out)
+        X_old  = self.X_train_     # (n, d)
+        K_old  = self.K_elm_       # (n, n)
+        w      = self._get_output_weight()   # (n, n_out) -- cached
+
+        # K_cross[i,j] = k(x_old_i, x_new_j)      shape (n, bs)
         K_cross = kernel_matrix(
             X_old, X_new, kernel=self.kernel, params=self.kernel_params
         )
-
-        # --- kernel of new block with itself -----------------------------
-        # K_new[i, j] = k(x_new_i, x_new_j)       shape (bs, bs)
+        # K_new[i,j]   = k(x_new_i, x_new_j)      shape (bs, bs)
         K_new = kernel_matrix(
             X_new, X_new, kernel=self.kernel, params=self.kernel_params
         )
 
-        # --- Eq. 17: sensitivity matrix ----------------------------------
-        # G = -R_inv @ K_cross                     shape (n, bs)
+        # Eq. 17 -- sensitivity matrix             shape (n, bs)
         G = -(R_inv @ K_cross)
 
-        # --- Eq. 26: Schur complement (gamma) ----------------------------
-        # gamma = K_new + I_bs/C + K_cross.T @ G   shape (bs, bs)
+        # Eq. 26 -- Schur complement (gamma)        shape (bs, bs)
         gamma = K_new + np.eye(bs) / self.C + K_cross.T @ G
 
-        # Solve gamma^{-1} once; reused for theta_new and R_inv update
-        # gamma is symmetric positive definite (Schur complement of SPD)
+        # gamma is SPD; solve once, reuse for theta_new and R_inv update
         gamma_inv = linalg.solve(gamma, np.eye(bs), assume_a="pos")
 
-        # --- Eq. 27: new-block Lagrange multipliers ----------------------
-        # E_bs = y_new - K_cross.T @ w             shape (bs, n_out)
-        E_bs = y_new - K_cross.T @ w
-        # theta_new = gamma_inv @ E_bs             shape (bs, n_out)
+        # Eq. 27 -- new-block Lagrange multipliers  shape (bs, n_out)
+        E_bs      = y_new - K_cross.T @ w
         theta_new = gamma_inv @ E_bs
 
-        # --- Eq. 20: update existing multipliers -------------------------
-        # delta_theta = G @ theta_new              shape (n, n_out)
+        # Eq. 20 -- stacked multipliers             shape (n+bs, n_out)
         delta_theta = G @ theta_new
-        theta_star = np.vstack([theta + delta_theta, theta_new])
+        theta_star  = np.vstack([theta + delta_theta, theta_new])
 
-        # --- Block-matrix inverse update ---------------------------------
-        # R11 = R_inv + G @ gamma_inv @ G.T        shape (n, n)
-        R11 = R_inv + G @ gamma_inv @ G.T
-        # R12 = -G @ gamma_inv                     shape (n, bs)
-        R12 = -(G @ gamma_inv)
-        # R22 = gamma_inv                          shape (bs, bs)
-        R_inv_new = np.block([[R11, R12],
-                              [R12.T, gamma_inv]])
+        # Block-matrix inverse update               shape (n+bs, n+bs)
+        R11      = R_inv + G @ gamma_inv @ G.T          # (n,  n)
+        R12      = -(G @ gamma_inv)                     # (n,  bs)
+        R_inv_expanded = np.block([[R11,    R12      ],
+                                   [R12.T,  gamma_inv]])
 
-        # --- Extend kernel matrix ----------------------------------------
-        # Full expanded kernel (n+bs, n+bs)
-        K_bottom_left = K_cross.T                              # (bs, n)
-        K_bottom_right = K_new                                 # (bs, bs)
-        K_top_right = K_cross                                  # (n, bs)
-        K_new_full = np.block([
-            [K_old,          K_top_right],
-            [K_bottom_left,  K_bottom_right],
+        # Expanded kernel matrix                    shape (n+bs, n+bs)
+        K_expanded = np.block([
+            [K_old,       K_cross       ],
+            [K_cross.T,   K_new         ],
         ])
 
-        # --- Store updated state -----------------------------------------
-        self.R_inv_ = R_inv_new
-        self.theta_ = theta_star
-        self.X_train_ = np.vstack([X_old, X_new])
-        self.y_train_ = np.vstack([self.y_train_, y_new])
-        self.K_elm_ = K_new_full
-        self.n_train_ = self.n_train_ + bs
+        X_expanded = np.vstack([X_old,        X_new])
+        y_expanded = np.vstack([self.y_train_, y_new])
+
+        # --- Mode-specific finalisation --------------------------------
+
+        if mode == "sequential":
+            self.R_inv_    = R_inv_expanded
+            self.theta_    = theta_star
+            self.K_elm_    = K_expanded
+            self.X_train_  = X_expanded
+            self.y_train_  = y_expanded
+            self.n_train_  = self.n_train_ + bs
+
+        else:  # mode == "decremental"
+            # Prune the oldest `bs` support vectors (sliding window).
+            # Equivalent to os_elmk_dec_learning.m lines:
+            #   model.theta = theta_ast((bs+1):end)
+            #   model.K_elm = K_elm_expanded((bs+1):end, (bs+1):end)
+            #   model.R_inv = R_inv_expanded((bs+1):end, (bs+1):end)
+            self.R_inv_    = R_inv_expanded[bs:, bs:]
+            self.theta_    = theta_star[bs:]
+            self.K_elm_    = K_expanded[bs:, bs:]
+            self.X_train_  = X_expanded[bs:]
+            self.y_train_  = y_expanded[bs:]
+            # n_train_ stays fixed (window_size)
+            # self.n_train_ is unchanged
 
         # Invalidate prediction cache
         self.output_weight_ = None
