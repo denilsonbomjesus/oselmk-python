@@ -101,7 +101,7 @@ class ZScoreNormalizer:
             raise ValueError("Expected at least one sample.")
         if X_arr.ndim != 2:
             raise ValueError("Expected a 2-D array.")
-        
+
         X = self._to_2d(X)
         self.n_features_in_ = X.shape[1]
         self.mean_ = np.mean(X, axis=0)
