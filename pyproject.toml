@@ -40,7 +40,26 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",
+    # --- Mathematical naming conventions (intentional) ---------------------
+    # Uppercase single-letter or matrix names (X, A, B, K, R_inv, …) are
+    # standard notation in linear-algebra / ML code and match the reference
+    # paper.  Renaming them to lowercase would harm readability.
+    "N802",  # function name should be lowercase
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+    # --- Type annotation quoting -------------------------------------------
+    # The package uses `from __future__ import annotations` (PEP 563) so
+    # all annotations are strings at runtime; removing quotes breaks nothing
+    # but UP037 fires spuriously.  Suppress it.
+    "UP037",
+]
 
 [tool.ruff.lint.per-file-ignores]
+# tests: assert statements are fine
 "tests/*" = ["S101"]
+# examples: sys.path is inserted before package imports intentionally;
+# ruff-isort cannot reorder across that barrier without breaking the
+# path-insertion side-effect.
+"examples/*" = ["I001"]
